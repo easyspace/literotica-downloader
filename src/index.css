@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+/* Global base */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: #020209;
+  color: #c0c0d0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a3e;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3a5e;
+}
+
+/* Selection */
+::selection {
+  background: #7c3aed33;
+  color: #e8d0ff;
+}
+
+/* Scrollbar utility classes */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #2a2a3e transparent;
+}
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-thumb-slate-700::-webkit-scrollbar-thumb {
+  background: #374151;
+}
+.scrollbar-track-transparent::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Code elements */
+code {
+  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', 'Roboto Mono', Menlo, Monaco, Consolas, monospace;
+}
+
+/* Smooth transitions */
+.transition-colors {
+  transition-property: color, background-color, border-color;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+/* Keyboard key styling */
+kbd {
+  font-family: inherit;
+  font-size: 0.8em;
+  padding: 0.1em 0.4em;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  color: #e2e8f0;
+  box-shadow: 0 1px 0 #334155;
+}
