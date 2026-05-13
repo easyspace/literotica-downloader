@@ -2,6 +2,9 @@
 
 Download complete author libraries from Literotica using the modern `/api/3/` API. Supports ZIP, HTML, and EPUB export with series grouping, filtering, and retry logic.
 
+## Install (SleazyFork)
+- https://sleazyfork.org/en/scripts/577945-literotica-downloader-v2
+
 ## Install
 - Firefox + Greasemonkey: install the userscript from SleazyFork (recommended once published), or install locally from `dist/greasemonkey.user.js`.
 
@@ -14,4 +17,3 @@ Support is provided only via https://studios.easyspace.in
 
 ## License
 All Rights Reserved. No redistribution or rehosting without explicit permission.
-
