@@ -1,5 +1,5 @@
 node_modules/
-dist/
+dist/*
 .DS_Store
 
 # Logs
@@ -14,6 +14,8 @@ pnpm-debug.log*
 
 # Archives / build artifacts
 *.zip
-01.jpg
-02.jpg
-Main.jpg
+
+# Allow publishing screenshots and the Greasemonkey build for GitHub releases.
+!dist/greasemonkey.user.js
+!screenshots/
+!screenshots/*.jpg
