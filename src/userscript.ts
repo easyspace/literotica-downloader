@@ -1,9 +1,12 @@
 export const USERSCRIPT = `// ==UserScript==
 // @name         Literotica Downloader V2
-// @namespace    https://github.com/literotica-downloader-v2
+// @namespace    https://studios.easyspace.in
 // @version      2.0.0
 // @description  Download complete author libraries from Literotica using the modern /api/3/ API. Supports ZIP, HTML, and EPUB export with full series grouping, filtering, and retry logic.
-// @author       Literotica Downloader V2
+// @author       easyspace
+// @license      All Rights Reserved
+// @homepageURL  https://studios.easyspace.in
+// @supportURL   https://studios.easyspace.in
 // @match        https://www.literotica.com/authors/*
 // @match        https://literotica.com/authors/*
 // @match        https://www.literotica.com/stories/memberpage.php*
