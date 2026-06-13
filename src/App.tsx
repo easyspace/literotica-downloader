@@ -42,7 +42,7 @@ const FEATURES = [
   {
     icon: "📄",
     title: "Clean HTML Export",
-    desc: "Archival-quality standalone HTML files. Metadata header, chapter separators, print-friendly CSS, sanitized filenames. Readable offline forever.",
+    desc: "Readable offline HTML with minimal reader-facing chrome. Multi-page stories stay in one file, and series can export as combined files or separate chapter files.",
     badge: "Archival",
   },
   {
@@ -54,7 +54,7 @@ const FEATURES = [
   {
     icon: "🗜️",
     title: "ZIP Package",
-    desc: "Complete ZIP containing /html/, /epub/, index.html, manifest.json, errors.log, and optional /omnibus/ combined anthology. Named after the author.",
+    desc: "Complete ZIP containing /html/, /epub/, index.html, manifest.json, and errors.log. Honors the same combined-files vs separate-chapters choice as direct downloads.",
     badge: "Complete",
   },
   {
@@ -113,7 +113,8 @@ const CHANGELOG = [
       "Complete V2 rebuild — no legacy code",
       "Migrated from HTML scraping to /api/3/ JSON endpoints",
       "Real EPUB 2.0 generation (OPF + NCX + XHTML)",
-      "ZIP package builder with /html/, /epub/, /omnibus/ folders",
+      "ZIP package builder with browsable index + manifest",
+      "Combined-files vs separate-chapters export choice",
       "Smart series grouping with chapter-level selection",
       "Exponential backoff retry engine",
       "Persistent settings via GM.setValue/GM.getValue",
@@ -269,14 +270,15 @@ function InstallTab() {
               Literotica Downloader V2
             </h2>
             <p className="text-slate-400 leading-relaxed">
-              A production-quality Greasemonkey userscript for downloading complete
+              A production-quality userscript for downloading complete
               author libraries from Literotica. Uses the modern{" "}
               <code className="text-violet-400 bg-slate-800 px-1 rounded">/api/3/</code>{" "}
               JSON endpoints — no brittle HTML scraping.
             </p>
             <div className="flex flex-wrap gap-2 mt-4">
-              <Badge text="v2.0.0" color="#7c3aed" />
-              <Badge text="Greasemonkey" color="#f97316" />
+              <Badge text="v2.1.0" color="#7c3aed" />
+              <Badge text="Tampermonkey" color="#f97316" />
+              <Badge text="Greasemonkey" color="#f59e0b" />
               <Badge text="API v3" color="#4ade80" />
               <Badge text="ZIP + EPUB + HTML" color="#60a5fa" />
             </div>
@@ -292,6 +294,12 @@ function InstallTab() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {[
             {
+              icon: "🧩",
+              name: "Tampermonkey",
+              desc: "Recommended for Chrome",
+              url: "https://www.tampermonkey.net/",
+            },
+            {
               icon: "🐒",
               name: "Greasemonkey",
               desc: "Firefox userscript extension",
@@ -300,13 +308,7 @@ function InstallTab() {
             {
               icon: "🌐",
               name: "Modern Browser",
-              desc: "Firefox 115+ recommended",
-              url: null,
-            },
-            {
-              icon: "📖",
-              name: "Literotica Account",
-              desc: "Not required, but improves rate limits",
+              desc: "Chrome or Firefox recommended",
               url: null,
             },
           ].map((r) => (
@@ -337,8 +339,17 @@ function InstallTab() {
         <h3 className="text-slate-200 font-semibold mb-5 flex items-center gap-2">
           <span>📋</span> Installation Steps
         </h3>
-        <InstallStep num={1} title="Install Greasemonkey">
-          Visit{" "}
+        <InstallStep num={1} title="Install a Userscript Manager">
+          For Chrome, install{" "}
+          <a
+            href="https://www.tampermonkey.net/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-violet-400 hover:underline"
+          >
+            Tampermonkey
+          </a>
+          . For Firefox, install{" "}
           <a
             href="https://addons.mozilla.org/firefox/addon/greasemonkey/"
             target="_blank"
@@ -347,11 +358,11 @@ function InstallTab() {
           >
             Firefox Add-ons (Greasemonkey)
           </a>{" "}
-          and install it in Firefox.
+          if you prefer Greasemonkey.
         </InstallStep>
-        <InstallStep num={2} title="Open Greasemonkey">
-          Click the Greasemonkey icon in the Firefox toolbar and open{" "}
-          <strong className="text-white">New User Script</strong>.
+        <InstallStep num={2} title="Open Your Userscript Manager">
+          Open Tampermonkey or Greasemonkey from the browser toolbar and create a{" "}
+          <strong className="text-white">new user script</strong>.
         </InstallStep>
         <InstallStep num={3} title="Create a New Script">
           Click the{" "}
@@ -362,7 +373,7 @@ function InstallTab() {
         <InstallStep num={4} title="Paste the Script">
           Select and delete all existing content in the editor. Then click the{" "}
           <strong className="text-white">Script Code</strong> tab above, copy the
-          entire script, and paste it into the Greasemonkey editor.
+          entire script, and paste it into the userscript editor.
         </InstallStep>
         <InstallStep num={5} title="Save the Script">
           Press <kbd className="bg-slate-700 text-white px-1.5 py-0.5 rounded text-xs">Ctrl+S</kbd>{" "}
@@ -381,7 +392,8 @@ function InstallTab() {
         </InstallStep>
         <InstallStep num={7} title="Select and Download">
           Use the panel filters to browse stories, select what you want, choose your
-          export format (HTML / EPUB / ZIP), then click{" "}
+          export format (HTML / EPUB / ZIP), choose combined files or separate
+          chapters, then click{" "}
           <strong className="text-white">Download Selected Stories</strong>.
         </InstallStep>
       </div>
@@ -547,14 +559,13 @@ function FeaturesTab() {
               name: "ZIP Package",
               default: true,
               contents: [
-                "/html/   — standalone HTML files",
-                "/epub/   — EPUB files",
-                "/omnibus/ — combined anthology",
+                "/html/   — exported HTML files",
+                "/epub/   — exported EPUB files",
                 "index.html — browsable catalog",
                 "manifest.json — metadata",
                 "errors.log — failure report",
               ],
-              note: "Default export. Complete collection in one file.",
+              note: "Package export. Respects the combined-files vs separate-chapters choice.",
             },
             {
               icon: "📄",
@@ -562,7 +573,7 @@ function FeaturesTab() {
               default: false,
               contents: [
                 "Self-contained single file",
-                "Metadata header block",
+                "Minimal reader-facing header",
                 "Page separators",
                 "Print-friendly CSS",
                 "Sanitized filenames",
@@ -577,8 +588,8 @@ function FeaturesTab() {
               contents: [
                 "Valid OPF package manifest",
                 "NCX navigation document",
-                "XHTML chapter files",
-                "Generated cover page",
+                "XHTML reading sections",
+                "Minimal title page",
                 "Embedded metadata",
                 "Chapter TOC navigation",
               ],
@@ -944,7 +955,7 @@ export default function App() {
         <div className="max-w-5xl mx-auto px-4 py-8 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="text-slate-600 text-sm">
             <span className="text-violet-400 font-semibold">Literotica Downloader V2</span>
-            {" "} — Production-quality Greasemonkey userscript
+            {" "} — Production-quality browser userscript
           </div>
           <div className="flex items-center gap-4 text-xs text-slate-600">
             <span>API: /api/3/</span>

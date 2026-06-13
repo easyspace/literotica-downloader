@@ -12,10 +12,16 @@ if (!match) {
 const templateBody = match[1];
 const userscript = Function("return `" + templateBody + "`;")();
 
-const outDir = path.resolve("dist");
-fs.mkdirSync(outDir, { recursive: true });
+const outputs = [
+  path.resolve("dist", "literotica-downloader-greasemonkey.user.js"),
+  path.resolve("dist", "literotica-downloader-tampermonkey.user.js"),
+  path.resolve("userscript", "literotica-downloader-greasemonkey.user.js"),
+  path.resolve("userscript", "literotica-downloader-tampermonkey.user.js"),
+  path.resolve("userscript", "greasemonkey.user.js"),
+];
 
-const outPath = path.join(outDir, "literotica-downloader-greasemonkey.user.js");
-fs.writeFileSync(outPath, userscript, "utf8");
-
-console.log("Generated:", outPath);
+for (const outPath of outputs) {
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, userscript, "utf8");
+  console.log("Generated:", outPath);
+}

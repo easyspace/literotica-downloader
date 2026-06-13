@@ -1,7 +1,8 @@
 # SleazyFork submission notes (Literotica Downloader V2)
 
 ## Upload this file
-- `D:\Desktop\literotica-author-library-downloader\dist\greasemonkey.user.js`
+- Firefox + Greasemonkey: `D:\Desktop\literotica-author-library-downloader\dist\literotica-downloader-greasemonkey.user.js`
+- Chrome + Tampermonkey: `D:\Desktop\literotica-author-library-downloader\dist\literotica-downloader-tampermonkey.user.js`
 
 ## Screenshots to upload (3)
 - `D:\Desktop\Main.jpg` (script panel highlighted on an author page)
@@ -16,6 +17,7 @@
   - ZIP (HTML files inside)
   - EPUB
   - HTML
+- Lets you choose whether series export as combined files or separate chapter files.
 
 ### How to use
 - Open an author page on Literotica (example: `https://www.literotica.com/authors/...`).
@@ -23,6 +25,7 @@
   - Search/filter (title search, category, rating, type, sort)
   - Select stories (Select All / Deselect All / Series / Standalones, etc.)
   - Choose an export format (HTML / EPUB / ZIP Package)
+  - Choose a file structure (Combined Files / Separate Chapters)
   - Click the download button (e.g. "Download X Selected")
 
 ### Notes / limitations
