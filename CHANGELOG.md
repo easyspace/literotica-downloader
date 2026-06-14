@@ -1,14 +1,18 @@
 # Changelog
 
-## 2.1.5 - 2026-06-14
+## 2.1.6 - 2026-06-14
 
-This release is the current Firefox-ready restore point and the recommended build for SleazyFork upload.
+This release keeps the Firefox + Greasemonkey path stable and adds the Chrome + Tampermonkey packaging fixes needed for large TXT ZIP exports.
 
 ### Fixed
 - Replaced broken `/api/3/` author and story retrieval with direct author-page and story-page HTML parsing.
 - Restored reliable catalog loading on author story pages where API endpoints were returning `404`.
 - Restored reliable story-content downloads for single stories and bulk runs.
 - Removed regressions that were causing empty or error-only exported files.
+- Fixed large-author catalog undercounting by reading embedded page data when the visible listing stops at the initial loaded set.
+- Fixed Chrome + Tampermonkey ZIP packaging hangs for `TXT + ZIP Package` exports by replacing the fragile shared path with a store-only archive writer.
+- Fixed packaging progress visibility during ZIP creation so long-running archive builds no longer look frozen.
+- Fixed abort handling during ZIP packaging so cancellation can stop archive work cleanly.
 
 ### Changed
 - Added explicit `TXT` export support alongside `HTML` and `EPUB`.
@@ -23,11 +27,14 @@ This release is the current Firefox-ready restore point and the recommended buil
 - Added `TXT` links to packaged ZIP output and package index pages.
 
 ### Packaging
-- Rebuilt release artifacts:
-  - `dist/literotica-downloader-greasemonkey.user.js`
-  - `dist/literotica-downloader-tampermonkey.user.js`
-- Rebuilt maintained userscript copies in `userscript/`.
+- Renamed local release artifacts to explicit browser-specific names:
+  - `dist/literotica-downloader-firefox-greasemonkey.user.js`
+  - `dist/literotica-downloader-chrome-tampermonkey.user.js`
+- Renamed maintained userscript copies to explicit browser-specific names:
+  - `userscript/literotica-downloader-firefox-greasemonkey.user.js`
+  - `userscript/literotica-downloader-chrome-tampermonkey.user.js`
+  - `userscript/firefox-greasemonkey.user.js`
 
 ### Notes
-- Firefox + Greasemonkey is the primary validated path for this release.
-- Chrome + Tampermonkey artifact is still generated, but this release package is being documented first for the Firefox path.
+- Firefox + Greasemonkey and Chrome + Tampermonkey are both validated for this release.
+- Firefox is the existing release path; Chrome is ready for a separate SleazyFork listing using the browser-specific artifact.

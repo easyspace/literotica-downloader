@@ -1,12 +1,12 @@
 # SleazyFork submission notes (Literotica Downloader V2)
 
 ## Release target
-- Version: `2.1.5`
-- Recommended upload first: Firefox + Greasemonkey
+- Version: `2.1.6`
+- Recommended upload order: Firefox + Greasemonkey first, Chrome + Tampermonkey second as a separate listing.
 
-## Upload this file
-- Firefox + Greasemonkey: `D:\Desktop\literotica-author-library-downloader\dist\literotica-downloader-greasemonkey.user.js`
-- Chrome + Tampermonkey: `D:\Desktop\literotica-author-library-downloader\dist\literotica-downloader-tampermonkey.user.js`
+## Upload these files
+- Firefox + Greasemonkey: `D:\Desktop\literotica-author-library-downloader\dist\literotica-downloader-firefox-greasemonkey.user.js`
+- Chrome + Tampermonkey: `D:\Desktop\literotica-author-library-downloader\dist\literotica-downloader-chrome-tampermonkey.user.js`
 
 ## Screenshots to upload (3)
 - `D:\Desktop\Main.jpg` (script panel highlighted on an author page)
@@ -24,6 +24,7 @@
   - TXT
 - Lets you choose whether exports are generated as combined files or separate chapter files.
 - Includes a stop button for cancelling long-running downloads.
+- Handles large author catalogs that require embedded page-data parsing beyond the initial visible listing.
 - Adds branded Easy Space Studios footer text to exported reading files.
 
 ### How to use

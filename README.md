@@ -1,16 +1,19 @@
 # Literotica Downloader V2
 
-Download complete author libraries from Literotica from author and member listing pages. The current release uses direct site HTML parsing rather than the old `/api/3/` flow and supports filtered selection, combined or separate exports, and branded `HTML`, `EPUB`, `TXT`, and `ZIP` output.
+Release documentation for Literotica Downloader V2. This build uses direct site HTML parsing rather than the old `/api/3/` flow and supports filtered selection, combined or separate exports, and branded `HTML`, `EPUB`, `TXT`, and `ZIP` output.
 
 ## Current release
 - Version: `2.1.5`
-- Primary target: Firefox + Greasemonkey
-- Secondary target: Chrome + Tampermonkey
+- Version: `2.1.6`
+- Firefox target: Greasemonkey
+- Chrome target: Tampermonkey
 
 ## Install
 - SleazyFork listing: https://sleazyfork.org/en/scripts/577945-literotica-downloader-v2
-- Firefox + Greasemonkey local file: `dist/literotica-downloader-greasemonkey.user.js`
-- Chrome + Tampermonkey local file: `dist/literotica-downloader-tampermonkey.user.js`
+- Firefox + Greasemonkey local upload file: `dist/literotica-downloader-firefox-greasemonkey.user.js`
+- Chrome + Tampermonkey local upload file: `dist/literotica-downloader-chrome-tampermonkey.user.js`
+- Firefox maintained local copy: `userscript/literotica-downloader-firefox-greasemonkey.user.js`
+- Chrome maintained local copy: `userscript/literotica-downloader-chrome-tampermonkey.user.js`
 
 ## What it does
 - Adds a downloader panel to Literotica author pages and member story listing pages.
@@ -20,6 +23,11 @@ Download complete author libraries from Literotica from author and member listin
 - Supports `Combined Files` and `Separate Chapters` export structure.
 - Adds Easy Space Studios footer branding to exported reading files.
 - Includes a `Stop Download` button to abort a running job cleanly.
+
+## Browser release scope
+- Firefox + Greasemonkey is the established release path.
+- Chrome + Tampermonkey uses a browser-specific build artifact and should be published as its own listing.
+- Local filenames include browser and userscript-manager targets explicitly.
 
 ## Usage
 1. Open a Literotica author page such as `https://www.literotica.com/authors/<author>/works/stories`.

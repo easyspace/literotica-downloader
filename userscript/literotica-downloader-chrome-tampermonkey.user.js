@@ -1,5 +1,5 @@
-export const USERSCRIPT = `// ==UserScript==
-// @name         Literotica Downloader V2
+// ==UserScript==
+// @name        Literotica Downloader for Chrome / Tampermonkey
 // @namespace    https://studios.easyspace.in
 // @version      2.1.6
 // @description  Download complete author libraries from Literotica using the site HTML. Supports ZIP, HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
@@ -12,12 +12,17 @@ export const USERSCRIPT = `// ==UserScript==
 // @match        https://www.literotica.com/stories/memberpage.php*
 // @match        https://literotica.com/stories/memberpage.php*
 // @grant        GM.getValue
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM.xmlHttpRequest
+// @grant        GM_xmlhttpRequest
 // @grant        GM.setValue
 // @connect      literotica.com
 // @connect      www.literotica.com
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js
-// @run-at       document-end
+// @run-at      document-idle
+// @inject-into  content
 // @noframes
 // ==/UserScript==
 
@@ -368,7 +373,7 @@ export const USERSCRIPT = `// ==UserScript==
 
       if (url.pathname === '/stories/memberpage.php') {
         const uid = url.searchParams.get('uid');
-        if (uid && /^\\d+$/.test(uid)) return uid;
+        if (uid && /^\d+$/.test(uid)) return uid;
       }
 
       return null;
@@ -411,17 +416,17 @@ export const USERSCRIPT = `// ==UserScript==
   }
 
   function escapeRegex(str) {
-    return String(str || '').replace(new RegExp('[-/\\\\^$*+?.()|[\\]{}]', 'g'), '\\$&');
+    return String(str || '').replace(new RegExp('[-/\\^$*+?.()|[\]{}]', 'g'), '\$&');
   }
 
   function extractAuthorUserIdFromHtml(html, author) {
     if (!html) return null;
     const safeAuthor = escapeRegex(author);
     const patterns = [
-      new RegExp('userid:(\\d+),username:"' + safeAuthor + '"', 'i'),
-      new RegExp('username:"' + safeAuthor + '".{0,400}?userid:(\\d+)', 'i'),
-      new RegExp('author:\\{userid:(\\d+),username:"' + safeAuthor + '"', 'i'),
-      new RegExp('memberpage\\.php\\?uid=(\\d{2,})', 'i'),
+      new RegExp('userid:(\d+),username:"' + safeAuthor + '"', 'i'),
+      new RegExp('username:"' + safeAuthor + '".{0,400}?userid:(\d+)', 'i'),
+      new RegExp('author:\{userid:(\d+),username:"' + safeAuthor + '"', 'i'),
+      new RegExp('memberpage\.php\?uid=(\d{2,})', 'i'),
     ];
 
     for (const pattern of patterns) {
@@ -435,12 +440,12 @@ export const USERSCRIPT = `// ==UserScript==
   async function resolveAuthorApiIdentifier(author) {
     const normalized = String(author || '').trim();
     if (!normalized) return normalized;
-    if (/^\\d+$/.test(normalized)) return normalized;
+    if (/^\d+$/.test(normalized)) return normalized;
 
     try {
       const url = new URL(window.location.href);
       const uid = url.searchParams.get('uid');
-      if (uid && /^\\d+$/.test(uid)) {
+      if (uid && /^\d+$/.test(uid)) {
         Logger.info('Resolved author API identifier: ' + uid);
         return uid;
       }
@@ -581,8 +586,8 @@ export const USERSCRIPT = `// ==UserScript==
       const categorySlug = categoryHref ? extractStorySlug(categoryHref) : '';
       const category = (categoryLink?.textContent || '').trim() || titleFromCategorySlug(categorySlug);
       const text = card.textContent || '';
-      const dateMatch = text.match(/\\b\\d{1,2}\\/\\d{1,2}\\/\\d{4}\\b/);
-      const ratingMatch = text.match(/\\b([0-4]\\.\\d{1,2}|5(?:\\.0{1,2})?)\\b/);
+      const dateMatch = text.match(/\b\d{1,2}\/\d{1,2}\/\d{4}\b/);
+      const ratingMatch = text.match(/\b([0-4]\.\d{1,2}|5(?:\.0{1,2})?)\b/);
 
       items.push({
         id: slug,
@@ -628,8 +633,8 @@ export const USERSCRIPT = `// ==UserScript==
 
     const wrappers = Array.from(doc.querySelectorAll('a, div, section'));
     for (const el of wrappers) {
-      const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
-      const match = text.match(/\b(\d{1,5})\s+Stories\b/i);
+      const text = (el.textContent || '').replace(/s+/g, ' ').trim();
+      const match = text.match(/(d{1,5})s+Stories/i);
       if (match) return parseInt(match[1], 10);
     }
 
@@ -668,14 +673,14 @@ export const USERSCRIPT = `// ==UserScript==
         if (embeddedAuthor && embeddedAuthor !== normalizedAuthor) continue;
       }
 
-      const idMatch = snippet.match(/id:(\d+)/);
+      const idMatch = snippet.match(/id:(d+)/);
       const descriptionMatch = snippet.match(/description:"([^"]*)"/);
       const categorySlugMatch = snippet.match(/pageUrl:"([^"]+)"/);
       const ratingMatch = snippet.match(/rate_all:([0-9.]+)/);
       const dateMatch = snippet.match(/date_approve:"([^"]+)"/);
-      const viewsMatch = snippet.match(/view_count:(\d+)/);
-      const commentsMatch = snippet.match(/comment_count:(\d+)/);
-      const wordsMatch = snippet.match(/words_count:(\d+)/);
+      const viewsMatch = snippet.match(/view_count:(d+)/);
+      const commentsMatch = snippet.match(/comment_count:(d+)/);
+      const wordsMatch = snippet.match(/words_count:(d+)/);
 
       const categorySlug = categorySlugMatch ? decodeSerializedField(categorySlugMatch[1]).trim() : '';
       itemsBySlug.set(slug, {
@@ -913,7 +918,7 @@ export const USERSCRIPT = `// ==UserScript==
       const pageLinks = Array.from(doc.querySelectorAll('a[href*="?page="]'))
         .map(link => {
           const href = link.getAttribute('href') || link.href || '';
-          const match = href.match(new RegExp('[?&]page=(\\\\d+)'));
+          const match = href.match(new RegExp('[?&]page=(\\d+)'));
           return match ? parseInt(match[1], 10) : 0;
         })
         .filter(Boolean);
@@ -1108,8 +1113,8 @@ export const USERSCRIPT = `// ==UserScript==
 
     function sanitizeFilename(str) {
       return str
-        .replace(/[<>:"/\\\\|?*]/g, '')
-        .replace(/\\s+/g, '_')
+        .replace(/[<>:"/\\|?*]/g, '')
+        .replace(/\s+/g, '_')
         .replace(/_+/g, '_')
         .trim()
         .substring(0, 100);
@@ -1135,10 +1140,10 @@ export const USERSCRIPT = `// ==UserScript==
       // The API returns HTML content in pageText
       // Sanitize but preserve paragraph structure
       return text
-        .replace(/<script[\\s\\S]*?<\\/script>/gi, '')
-        .replace(/<style[\\s\\S]*?<\\/style>/gi, '')
-        .replace(/on\\w+="[^"]*"/gi, '')
-        .replace(/on\\w+='[^']*'/gi, '')
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/on\w+="[^"]*"/gi, '')
+        .replace(/on\w+='[^']*'/gi, '')
         || '<p>' + escapeHtml(text) + '</p>';
     }
 
@@ -1156,7 +1161,7 @@ export const USERSCRIPT = `// ==UserScript==
     }
 
     function readingCSS() {
-      return \`
+      return `
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
           font-family: Georgia, 'Times New Roman', serif;
@@ -1227,7 +1232,7 @@ export const USERSCRIPT = `// ==UserScript==
         @media print {
           body { background: white; padding: 0; max-width: none; }
         }
-      \`;
+      `;
     }
 
     function buildStoryBody(storyData, options = {}) {
@@ -1239,60 +1244,60 @@ export const USERSCRIPT = `// ==UserScript==
         ? '<' + titleTag + ' class="story-title">' + escapeHtml(storyData.title) + '</' + titleTag + '>'
         : '';
       const label = chapterLabel ? '<p class="story-kicker">' + escapeHtml(chapterLabel) + '</p>' : '';
-      const pagesHTML = pages.map((pg, i) => \`
-        \${i > 0 ? '<div class="page-separator">Page ' + pg.pageNum + '</div>' : ''}
-        <div class="story-content" id="page-\${pg.pageNum}">\${processPageText(pg.text)}</div>
-      \`).join('');
+      const pagesHTML = pages.map((pg, i) => `
+        ${i > 0 ? '<div class="page-separator">Page ' + pg.pageNum + '</div>' : ''}
+        <div class="story-content" id="page-${pg.pageNum}">${processPageText(pg.text)}</div>
+      `).join('');
 
-      return \`
+      return `
         <section class="story-section">
-          \${label}
-          \${heading}
-          \${pagesHTML}
+          ${label}
+          ${heading}
+          ${pagesHTML}
         </section>
-      \`;
+      `;
     }
 
     function buildStoryHTML(storyData) {
-      return \`<!DOCTYPE html>
+      return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>\${escapeHtml(storyData.title)}</title>
-  <style>\${readingCSS()}</style>
+  <title>${escapeHtml(storyData.title)}</title>
+  <style>${readingCSS()}</style>
 </head>
 <body>
-  \${buildStoryBody(storyData)}
-  \${buildDownloadFooter()}
+  ${buildStoryBody(storyData)}
+  ${buildDownloadFooter()}
 </body>
-</html>\`;
+</html>`;
     }
 
     function buildCombinedHTML(group) {
       const storiesHTML = group.stories.map((storyData, index) => {
         const chapterLabel = group.isSeries ? 'Chapter ' + (index + 1) : '';
         const titleTag = group.isSeries ? 'h2' : 'h1';
-        return \`\${index > 0 ? '<div class="story-separator"></div>' : ''}\${buildStoryBody(storyData, { chapterLabel, titleTag })}\`;
+        return `${index > 0 ? '<div class="story-separator"></div>' : ''}${buildStoryBody(storyData, { chapterLabel, titleTag })}`;
       }).join('');
 
-      return \`<!DOCTYPE html>
+      return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>\${escapeHtml(group.title)}</title>
-  <style>\${readingCSS()}</style>
+  <title>${escapeHtml(group.title)}</title>
+  <style>${readingCSS()}</style>
 </head>
 <body>
-  \${storiesHTML}
-  \${buildDownloadFooter()}
+  ${storiesHTML}
+  ${buildDownloadFooter()}
 </body>
-</html>\`;
+</html>`;
     }
 
     function buildIndexHTML(author, authorName, manifestEntries, exportMode) {
-      const css = \`
+      const css = `
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: system-ui, -apple-system, sans-serif; background: #0f0f14; color: #e0e0e8; min-height: 100vh; }
         .header { background: linear-gradient(135deg, #1a0a24, #0a1a2e); padding: 3rem 2rem; text-align: center; border-bottom: 1px solid #2a2a3a; }
@@ -1315,49 +1320,49 @@ export const USERSCRIPT = `// ==UserScript==
         .footer { text-align: center; padding: 2rem; color: #444; font-size: 0.8rem; border-top: 1px solid #1a1a24; margin-top: 2rem; }
         .footer a { color: #b48cf0; text-decoration: none; }
         .footer a:hover { text-decoration: underline; }
-      \`;
-      const entriesHTML = manifestEntries.map(entry => \`
+      `;
+      const entriesHTML = manifestEntries.map(entry => `
         <div class="story-card">
-          <h2>\${escapeHtml(entry.title)}</h2>
+          <h2>${escapeHtml(entry.title)}</h2>
             <div class="story-meta">
-              <span>\${entry.kind === 'series' ? 'Series' : 'Story'}</span>
-              \${entry.category ? '<span>' + escapeHtml(entry.category) + '</span>' : ''}
-              \${entry.rating > 0 ? '<span class="rating">★ ' + entry.rating.toFixed(2) + '</span>' : ''}
-              \${entry.dateFormatted ? '<span>' + escapeHtml(entry.dateFormatted) + '</span>' : ''}
-              \${entry.parts ? '<span>' + entry.parts + ' format' + (entry.parts !== 1 ? 's' : '') + '</span>' : ''}
+              <span>${entry.kind === 'series' ? 'Series' : 'Story'}</span>
+              ${entry.category ? '<span>' + escapeHtml(entry.category) + '</span>' : ''}
+              ${entry.rating > 0 ? '<span class="rating">★ ' + entry.rating.toFixed(2) + '</span>' : ''}
+              ${entry.dateFormatted ? '<span>' + escapeHtml(entry.dateFormatted) + '</span>' : ''}
+              ${entry.parts ? '<span>' + entry.parts + ' format' + (entry.parts !== 1 ? 's' : '') + '</span>' : ''}
             </div>
           <div class="file-links">
-            \${entry.html ? '<a href="' + entry.html + '">HTML</a>' : ''}
-            \${entry.epub ? '<a href="' + entry.epub + '">EPUB</a>' : ''}
-            \${entry.txt ? '<a href="' + entry.txt + '">TXT</a>' : ''}
+            ${entry.html ? '<a href="' + entry.html + '">HTML</a>' : ''}
+            ${entry.epub ? '<a href="' + entry.epub + '">EPUB</a>' : ''}
+            ${entry.txt ? '<a href="' + entry.txt + '">TXT</a>' : ''}
           </div>
         </div>
-      \`).join('');
+      `).join('');
 
-      return \`<!DOCTYPE html>
+      return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>\${escapeHtml(authorName || author)} — Literotica Collection</title>
-  <style>\${css}</style>
+  <title>${escapeHtml(authorName || author)} — Literotica Collection</title>
+  <style>${css}</style>
 </head>
 <body>
   <div class="header">
-    <h1>📚 \${escapeHtml(authorName || author)}</h1>
-    <p class="sub">Literotica Author Collection • \${exportMode === 'combined' ? 'Combined files' : 'Separate chapter files'}</p>
+    <h1>📚 ${escapeHtml(authorName || author)}</h1>
+    <p class="sub">Literotica Author Collection • ${exportMode === 'combined' ? 'Combined files' : 'Separate chapter files'}</p>
     <div class="stats">
-      <div class="stat"><div class="num">\${manifestEntries.length}</div><div class="label">Exported Entries</div></div>
-      <div class="stat"><div class="num">\${manifestEntries.filter(entry => entry.kind === 'series').length}</div><div class="label">Series</div></div>
-      <div class="stat"><div class="num">\${manifestEntries.filter(entry => entry.kind === 'story').length}</div><div class="label">Stories</div></div>
+      <div class="stat"><div class="num">${manifestEntries.length}</div><div class="label">Exported Entries</div></div>
+      <div class="stat"><div class="num">${manifestEntries.filter(entry => entry.kind === 'series').length}</div><div class="label">Series</div></div>
+      <div class="stat"><div class="num">${manifestEntries.filter(entry => entry.kind === 'story').length}</div><div class="label">Stories</div></div>
     </div>
   </div>
   <div class="container">
-    \${entriesHTML}
+    ${entriesHTML}
   </div>
-  <div class="footer">Downloaded with Literotica Downloader • \${getDownloadedDate()} from <a href="\${studioUrl}" target="_blank" rel="noopener noreferrer">\${studioName}</a></div>
+  <div class="footer">Downloaded with Literotica Downloader • ${getDownloadedDate()} from <a href="${studioUrl}" target="_blank" rel="noopener noreferrer">${studioName}</a></div>
 </body>
-</html>\`;
+</html>`;
     }
 
     return {
@@ -1379,10 +1384,10 @@ export const USERSCRIPT = `// ==UserScript==
 
     function cleanHtml(text) {
       return String(text || '')
-        .replace(/<script[\\s\\S]*?<\\/script>/gi, '')
-        .replace(/<style[\\s\\S]*?<\\/style>/gi, '')
-        .replace(/on\\w+="[^"]*"/gi, '')
-        .replace(/on\\w+='[^']*'/gi, '');
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/on\w+="[^"]*"/gi, '')
+        .replace(/on\w+='[^']*'/gi, '');
     }
 
     function htmlToText(text) {
@@ -1424,7 +1429,7 @@ export const USERSCRIPT = `// ==UserScript==
       let previousBlank = false;
 
       lines.forEach(line => {
-        const cleanedLine = line.replace(/[ \t]+$/g, '');
+        const cleanedLine = line.replace(/[ 	]+$/g, '');
         const isBlank = cleanedLine.trim() === '';
         if (isBlank) {
           if (!previousBlank && result.length > 0) result.push('');
@@ -1502,12 +1507,12 @@ export const USERSCRIPT = `// ==UserScript==
     function processPageTextEPUB(text) {
       if (!text) return '<p><em>[No content available]</em></p>';
       let processed = text
-        .replace(/<script[\\s\\S]*?<\\/script>/gi, '')
-        .replace(/<style[\\s\\S]*?<\\/style>/gi, '')
-        .replace(/on\\w+="[^"]*"/gi, '')
-        .replace(/on\\w+='[^']*'/gi, '');
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/on\w+="[^"]*"/gi, '')
+        .replace(/on\w+='[^']*'/gi, '');
       if (!processed.trim().startsWith('<')) {
-        processed = processed.split('\\n\\n').map(p => '<p>' + p.replace(/\\n/g, '<br/>') + '</p>').join('\\n');
+        processed = processed.split('\n\n').map(p => '<p>' + p.replace(/\n/g, '<br/>') + '</p>').join('\n');
       }
       return processed;
     }
@@ -1523,7 +1528,7 @@ export const USERSCRIPT = `// ==UserScript==
       const pagesHTML = pages.map((pg, index) => {
         const pageLabel = index > 0 ? '<h2>Page ' + pg.pageNum + '</h2>' : '';
         return pageLabel + processPageTextEPUB(pg.text);
-      }).join('\\n');
+      }).join('\n');
       const footerHtml = includeFooter ? HTMLBuilder.buildDownloadFooterXHTML() : '';
       return labelHtml + titleHtml + pagesHTML + footerHtml;
     }
@@ -1539,19 +1544,19 @@ export const USERSCRIPT = `// ==UserScript==
       zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
 
       // META-INF/container.xml
-      zip.file('META-INF/container.xml', \`<?xml version="1.0" encoding="UTF-8"?>
+      zip.file('META-INF/container.xml', `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:schemas:container">
   <rootfiles>
     <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
   </rootfiles>
-</container>\`);
+</container>`);
 
       // Title page
-      const coverXHTML = \`<?xml version="1.0" encoding="utf-8"?>
+      const coverXHTML = `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
-  <title>\${safeTitle}</title>
+  <title>${safeTitle}</title>
   <style type="text/css">
     body { margin: 0; padding: 0; background: #fafaf8; color: #1a1a1a; font-family: Georgia, serif; }
     .cover { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3rem 2rem; text-align: center; }
@@ -1562,12 +1567,12 @@ export const USERSCRIPT = `// ==UserScript==
 </head>
 <body>
   <div class="cover">
-    <h1>\${safeTitle}</h1>
-    <p class="by">by \${safeAuthor}</p>
-    \${description ? '<p class="desc">' + HTMLBuilder.escapeHtml(description) + '</p>' : ''}
+    <h1>${safeTitle}</h1>
+    <p class="by">by ${safeAuthor}</p>
+    ${description ? '<p class="desc">' + HTMLBuilder.escapeHtml(description) + '</p>' : ''}
   </div>
 </body>
-</html>\`;
+</html>`;
 
       zip.file('OEBPS/cover.xhtml', coverXHTML);
 
@@ -1577,11 +1582,11 @@ export const USERSCRIPT = `// ==UserScript==
         const id = 'section-' + String(i + 1).padStart(3, '0');
         const filename = 'section' + String(i + 1).padStart(3, '0') + '.xhtml';
 
-        const xhtml = \`<?xml version="1.0" encoding="utf-8"?>
+        const xhtml = `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
-  <title>\${HTMLBuilder.escapeHtml(section.title)}</title>
+  <title>${HTMLBuilder.escapeHtml(section.title)}</title>
   <style type="text/css">
     body { font-family: Georgia, 'Times New Roman', serif; font-size: 1em; line-height: 1.8; color: #1a1a1a; margin: 1.5em 2em; }
     p { margin-bottom: 1em; text-indent: 1.5em; }
@@ -1593,9 +1598,9 @@ export const USERSCRIPT = `// ==UserScript==
   </style>
 </head>
 <body>
-  \${section.body}
+  ${section.body}
 </body>
-</html>\`;
+</html>`;
 
         zip.file('OEBPS/' + filename, xhtml);
         chapterFiles.push({ id, filename, title: section.title });
@@ -1604,58 +1609,58 @@ export const USERSCRIPT = `// ==UserScript==
       // content.opf
       const manifestItems = [
         '<item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>',
-        ...chapterFiles.map(c => \`<item id="\${c.id}" href="\${c.filename}" media-type="application/xhtml+xml"/>\`)
-      ].join('\\n    ');
+        ...chapterFiles.map(c => `<item id="${c.id}" href="${c.filename}" media-type="application/xhtml+xml"/>`)
+      ].join('\n    ');
 
       const spineItems = [
         '<itemref idref="cover"/>',
-        ...chapterFiles.map(c => \`<itemref idref="\${c.id}"/>\`)
-      ].join('\\n    ');
+        ...chapterFiles.map(c => `<itemref idref="${c.id}"/>`)
+      ].join('\n    ');
 
-      const opf = \`<?xml version="1.0" encoding="UTF-8"?>
+      const opf = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookId" version="2.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
-    <dc:identifier id="BookId">urn:uuid:\${uid}</dc:identifier>
-    <dc:title>\${safeTitle}</dc:title>
-    <dc:creator opf:role="aut">\${safeAuthor}</dc:creator>
-    <dc:subject>\${HTMLBuilder.escapeHtml(category)}</dc:subject>
-    <dc:description>\${HTMLBuilder.escapeHtml(description)}</dc:description>
+    <dc:identifier id="BookId">urn:uuid:${uid}</dc:identifier>
+    <dc:title>${safeTitle}</dc:title>
+    <dc:creator opf:role="aut">${safeAuthor}</dc:creator>
+    <dc:subject>${HTMLBuilder.escapeHtml(category)}</dc:subject>
+    <dc:description>${HTMLBuilder.escapeHtml(description)}</dc:description>
     <dc:publisher>Literotica Downloader V2</dc:publisher>
-    <dc:date>\${dateISO}</dc:date>
+    <dc:date>${dateISO}</dc:date>
     <dc:language>en</dc:language>
-    \${slug ? '<dc:source>https://www.literotica.com/s/' + slug + '</dc:source>' : ''}
+    ${slug ? '<dc:source>https://www.literotica.com/s/' + slug + '</dc:source>' : ''}
     <meta name="cover" content="cover"/>
   </metadata>
   <manifest>
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
-    \${manifestItems}
+    ${manifestItems}
   </manifest>
   <spine toc="ncx">
-    \${spineItems}
+    ${spineItems}
   </spine>
-</package>\`;
+</package>`;
 
       zip.file('OEBPS/content.opf', opf);
 
       // toc.ncx
       const navPoints = [
-        \`<navPoint id="cover" playOrder="1"><navLabel><text>Cover</text></navLabel><content src="cover.xhtml"/></navPoint>\`,
-        ...chapterFiles.map((c, i) => \`<navPoint id="\${c.id}" playOrder="\${i + 2}"><navLabel><text>\${HTMLBuilder.escapeHtml(c.title)}</text></navLabel><content src="\${c.filename}"/></navPoint>\`)
-      ].join('\\n    ');
+        `<navPoint id="cover" playOrder="1"><navLabel><text>Cover</text></navLabel><content src="cover.xhtml"/></navPoint>`,
+        ...chapterFiles.map((c, i) => `<navPoint id="${c.id}" playOrder="${i + 2}"><navLabel><text>${HTMLBuilder.escapeHtml(c.title)}</text></navLabel><content src="${c.filename}"/></navPoint>`)
+      ].join('\n    ');
 
-      const ncx = \`<?xml version="1.0" encoding="UTF-8"?>
+      const ncx = `<?xml version="1.0" encoding="UTF-8"?>
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
   <head>
-    <meta name="dtb:uid" content="urn:uuid:\${uid}"/>
+    <meta name="dtb:uid" content="urn:uuid:${uid}"/>
     <meta name="dtb:depth" content="1"/>
     <meta name="dtb:totalPageCount" content="0"/>
     <meta name="dtb:maxPageNumber" content="0"/>
   </head>
-  <docTitle><text>\${safeTitle}</text></docTitle>
+  <docTitle><text>${safeTitle}</text></docTitle>
   <navMap>
-    \${navPoints}
+    ${navPoints}
   </navMap>
-</ncx>\`;
+</ncx>`;
 
       zip.file('OEBPS/toc.ncx', ncx);
 
@@ -2072,7 +2077,7 @@ export const USERSCRIPT = `// ==UserScript==
 
       // Errors log
       if (errorLog.length > 0) {
-        const errText = errorLog.map(e => '[ERROR] ' + e.story + ': ' + e.error).join('\\n');
+        const errText = errorLog.map(e => '[ERROR] ' + e.story + ': ' + e.error).join('\n');
         if (useStoredArchive) {
           addStoredArchiveFile('errors.log', errText);
         } else if (zip) {
@@ -2297,7 +2302,7 @@ export const USERSCRIPT = `// ==UserScript==
     let selectedCountEl = null;
     let isOpen = true;
 
-    const CSS = \`
+    const CSS = `
       #litdl-panel {
         position: fixed;
         top: 0;
@@ -2564,7 +2569,7 @@ export const USERSCRIPT = `// ==UserScript==
         #litdl-panel.collapsed { transform: translateY(calc(50vh - 30px)); }
         body.litdl-active { margin-right: 0 !important; margin-bottom: 50vh !important; }
       }
-    \`;
+    `;
 
     function createPanel() {
       isOpen = Settings.get('panelOpen') !== false;
@@ -2597,11 +2602,11 @@ export const USERSCRIPT = `// ==UserScript==
       panelEl.id = 'litdl-panel';
       if (!isOpen) panelEl.classList.add('collapsed');
 
-      panelEl.innerHTML = \`
+      panelEl.innerHTML = `
         <div class="litdl-header">
           <h2>📥 Literotica Downloader <span style="color:#5a3a8a;font-size:10px;font-weight:400;">V2</span></h2>
           <div class="meta-line">
-            <span>Version: <span class="meta-count" id="litdl-version">\${SCRIPT_VERSION}</span></span>
+            <span>Version: <span class="meta-count" id="litdl-version">${SCRIPT_VERSION}</span></span>
             <span>Author: <span class="meta-count" id="litdl-author-name">Detecting...</span></span>
             <span><span class="meta-count" id="litdl-total-count">0</span> stories</span>
             <span><span class="meta-count" id="litdl-selected-count">0</span> selected</span>
@@ -2695,7 +2700,7 @@ export const USERSCRIPT = `// ==UserScript==
           <div class="litdl-section-title" style="margin-bottom:4px;">Console</div>
           <div class="litdl-log" id="litdl-log"></div>
         </div>
-      \`;
+      `;
 
       document.body.appendChild(panelEl);
       if (isOpen) document.body.classList.add('litdl-active');
@@ -2875,7 +2880,7 @@ export const USERSCRIPT = `// ==UserScript==
       if (catSelect && state.grouped) {
         const cats = State.getCategories();
         const current = catSelect.value;
-        catSelect.innerHTML = cats.map(c => \`<option value="\${c}" \${c === current ? 'selected' : ''}>\${c === 'all' ? 'All Categories' : c}</option>\`).join('');
+        catSelect.innerHTML = cats.map(c => `<option value="${c}" ${c === current ? 'selected' : ''}>${c === 'all' ? 'All Categories' : c}</option>`).join('');
       }
 
       renderStoryList();
@@ -2909,19 +2914,19 @@ export const USERSCRIPT = `// ==UserScript==
       const el = document.createElement('div');
       el.className = 'litdl-story-item';
       const checked = state.selected.has(story.id);
-      el.innerHTML = \`
-        <div class="litdl-checkbox \${checked ? 'checked' : ''}" data-id="\${story.id}"></div>
+      el.innerHTML = `
+        <div class="litdl-checkbox ${checked ? 'checked' : ''}" data-id="${story.id}"></div>
         <div class="litdl-story-info">
-          <div class="litdl-story-title" title="\${HTMLBuilder.escapeHtml(story.title)}">\${HTMLBuilder.escapeHtml(story.title)}</div>
+          <div class="litdl-story-title" title="${HTMLBuilder.escapeHtml(story.title)}">${HTMLBuilder.escapeHtml(story.title)}</div>
           <div class="litdl-story-meta">
-            <span>\${HTMLBuilder.escapeHtml(story.category)}</span>
-            \${story.rating > 0 ? '<span class="litdl-rating">★ ' + story.rating.toFixed(2) + '</span>' : ''}
-            <span>\${story.dateFormatted}</span>
-            <span>\${story.pageCount}p</span>
-            \${story.wordCount > 0 ? '<span>~' + Math.round(story.wordCount / 1000) + 'k words</span>' : ''}
+            <span>${HTMLBuilder.escapeHtml(story.category)}</span>
+            ${story.rating > 0 ? '<span class="litdl-rating">★ ' + story.rating.toFixed(2) + '</span>' : ''}
+            <span>${story.dateFormatted}</span>
+            <span>${story.pageCount}p</span>
+            ${story.wordCount > 0 ? '<span>~' + Math.round(story.wordCount / 1000) + 'k words</span>' : ''}
           </div>
         </div>
-      \`;
+      `;
       el.querySelector('.litdl-checkbox').onclick = (e) => {
         e.stopPropagation();
         State.toggleItem(story.id);
@@ -2944,36 +2949,36 @@ export const USERSCRIPT = `// ==UserScript==
 
       const checkClass = allSelected ? 'checked' : partialSelected ? 'partial' : '';
 
-      el.innerHTML = \`
+      el.innerHTML = `
         <div class="litdl-story-item series-parent" style="padding-right:8px;">
-          <div class="litdl-checkbox \${checkClass}" data-series-id="\${series.id}"></div>
+          <div class="litdl-checkbox ${checkClass}" data-series-id="${series.id}"></div>
           <div class="litdl-story-info">
-            <div class="litdl-story-title" title="\${HTMLBuilder.escapeHtml(series.title)}">📚 \${HTMLBuilder.escapeHtml(series.title)}</div>
+            <div class="litdl-story-title" title="${HTMLBuilder.escapeHtml(series.title)}">📚 ${HTMLBuilder.escapeHtml(series.title)}</div>
             <div class="litdl-story-meta">
-              <span>\${HTMLBuilder.escapeHtml(series.category)}</span>
-              \${series.rating > 0 ? '<span class="litdl-rating">★ ' + series.rating.toFixed(2) + '</span>' : ''}
-              <span>\${series.chapters.length} chapters</span>
-              <span>\${series.pageCount}p total</span>
+              <span>${HTMLBuilder.escapeHtml(series.category)}</span>
+              ${series.rating > 0 ? '<span class="litdl-rating">★ ' + series.rating.toFixed(2) + '</span>' : ''}
+              <span>${series.chapters.length} chapters</span>
+              <span>${series.pageCount}p total</span>
             </div>
-            <span class="litdl-series-label">SERIES — \${selectedCount}/\${series.chapters.length} selected</span>
+            <span class="litdl-series-label">SERIES — ${selectedCount}/${series.chapters.length} selected</span>
           </div>
-          <button class="litdl-expand-btn \${isExpanded ? 'open' : ''}" data-expand-id="\${series.id}">▶</button>
+          <button class="litdl-expand-btn ${isExpanded ? 'open' : ''}" data-expand-id="${series.id}">▶</button>
         </div>
-        \${isExpanded ? '<div class="litdl-chapter-list">' + series.chapters.map((ch, i) => {
+        ${isExpanded ? '<div class="litdl-chapter-list">' + series.chapters.map((ch, i) => {
           const chChecked = state.selected.has(ch.id);
-          return \`<div class="litdl-story-item" style="padding-left:32px;" data-ch-id="\${ch.id}">
-            <div class="litdl-checkbox \${chChecked ? 'checked' : ''}" data-id="\${ch.id}"></div>
+          return `<div class="litdl-story-item" style="padding-left:32px;" data-ch-id="${ch.id}">
+            <div class="litdl-checkbox ${chChecked ? 'checked' : ''}" data-id="${ch.id}"></div>
             <div class="litdl-story-info">
-              <div class="litdl-story-title" title="\${HTMLBuilder.escapeHtml(ch.title)}">\${i + 1}. \${HTMLBuilder.escapeHtml(ch.title)}</div>
+              <div class="litdl-story-title" title="${HTMLBuilder.escapeHtml(ch.title)}">${i + 1}. ${HTMLBuilder.escapeHtml(ch.title)}</div>
               <div class="litdl-story-meta">
-                \${ch.rating > 0 ? '<span class="litdl-rating">★ ' + ch.rating.toFixed(2) + '</span>' : ''}
-                <span>\${ch.dateFormatted}</span>
-                <span>\${ch.pageCount}p</span>
+                ${ch.rating > 0 ? '<span class="litdl-rating">★ ' + ch.rating.toFixed(2) + '</span>' : ''}
+                <span>${ch.dateFormatted}</span>
+                <span>${ch.pageCount}p</span>
               </div>
             </div>
-          </div>\`;
+          </div>`;
         }).join('') + '</div>' : ''}
-      \`;
+      `;
 
       // Series checkbox
       el.querySelector('[data-series-id]').onclick = (e) => {
@@ -3002,7 +3007,7 @@ export const USERSCRIPT = `// ==UserScript==
 
     function setLoading(msg) {
       if (storyListEl) {
-        storyListEl.innerHTML = \`<div style="padding:30px;text-align:center;color:#444;">\${msg}</div>\`;
+        storyListEl.innerHTML = `<div style="padding:30px;text-align:center;color:#444;">${msg}</div>`;
       }
     }
 
@@ -3415,4 +3420,3 @@ export const USERSCRIPT = `// ==UserScript==
   }
 
 })();
-`;

@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Literotica Downloader V2
+// @name        Literotica Downloader for Firefox / Greasemonkey
 // @namespace    https://studios.easyspace.in
-// @version      2.1.5
+// @version      2.1.6
 // @description  Download complete author libraries from Literotica using the site HTML. Supports ZIP, HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
 // @author       easyspace
 // @license      All Rights Reserved
@@ -46,12 +46,14 @@
   // ============================================================
 
   const API_BASE = 'https://www.literotica.com/api/3';
-  const SCRIPT_VERSION = '2.1.5';
+  const SCRIPT_VERSION = '2.1.6';
   const REQUEST_DELAY_MIN = 300;
   const REQUEST_DELAY_MAX = 500;
   const MAX_RETRIES = 3;
   const RETRY_BASE_DELAY = 1000;
   const ALLOWED_HOSTS = new Set(['www.literotica.com', 'literotica.com']);
+
+  console.log('[LitDL] Bootstrap start (v' + SCRIPT_VERSION + ') on ' + window.location.href);
 
   const GMCompat = (() => {
     const gmObj = typeof GM === 'object' && GM ? GM : null;
@@ -277,6 +279,20 @@
 
   const Settings = (() => {
     const KEY = 'litdl_v2_settings';
+    const FRESH_PAGE_KEYS = [
+      'panelOpen',
+      'exportHTML',
+      'exportEPUB',
+      'exportTXT',
+      'exportZIP',
+      'exportMode',
+      'filterCategory',
+      'filterRating',
+      'filterType',
+      'sortBy',
+      'searchQuery',
+      'lastSelection',
+    ];
 
     function defaults() {
       return {
@@ -315,7 +331,12 @@
       init: async () => {
         if (_ready) return { ..._state };
         _state = await load();
+        const initialDefaults = defaults();
+        FRESH_PAGE_KEYS.forEach(key => {
+          _state[key] = initialDefaults[key];
+        });
         _ready = true;
+        save(_state);
         return { ..._state };
       },
       get: (key) => _state[key],
@@ -373,6 +394,19 @@
       const match = raw.match(new RegExp('/s/([^/?#]+)', 'i'));
       if (match) return match[1];
       return raw.replace(new RegExp('^/+|/+$', 'g'), '');
+    }
+  }
+
+  function decodeSerializedField(value) {
+    if (value == null) return '';
+    const raw = String(value);
+    try {
+      return JSON.parse('"' + raw + '"');
+    } catch {
+      const slash = String.fromCharCode(92);
+      return raw
+        .split(slash + '"').join('"')
+        .split(slash + slash).join(slash);
     }
   }
 
@@ -579,8 +613,107 @@
     return { authorName, items };
   }
 
+  function extractAuthorStoryTotal(doc) {
+    if (!doc || typeof doc.querySelectorAll !== 'function') return 0;
+
+    const links = Array.from(doc.querySelectorAll('a[href*="/authors/"][href*="/works/stories"], a[title="Stories"]'));
+    for (const link of links) {
+      const label = (link.textContent || '').trim();
+      if (!/stories/i.test(label)) continue;
+
+      const countEl = link.querySelector('span');
+      const countText = (countEl?.textContent || label).replace(/[^0-9]/g, '');
+      if (countText) return parseInt(countText, 10);
+    }
+
+    const wrappers = Array.from(doc.querySelectorAll('a, div, section'));
+    for (const el of wrappers) {
+      const text = (el.textContent || '').replace(/s+/g, ' ').trim();
+      const match = text.match(/(d{1,5})s+Stories/i);
+      if (match) return parseInt(match[1], 10);
+    }
+
+    return 0;
+  }
+
+  function extractCatalogFromEmbeddedData(html, author, authorName) {
+    const normalizedAuthor = String(author || '').trim().toLowerCase();
+    if (!html) {
+      return { authorName: authorName || author, items: [] };
+    }
+
+    const itemsBySlug = new Map();
+    const recordRegex = /title:"([^"]+)",type:"story",url:"([^"]+)"/g;
+    let match;
+
+    while ((match = recordRegex.exec(html)) !== null) {
+      const title = decodeSerializedField(match[1]).trim();
+      const slug = decodeSerializedField(match[2]).trim();
+      if (!slug || !title || itemsBySlug.has(slug)) continue;
+
+      const recordAnchor = html.lastIndexOf('allow_vote:', match.index);
+      const start = recordAnchor !== -1 ? recordAnchor : Math.max(0, match.index - 1800);
+      let end = html.indexOf('},$R[', match.index);
+      if (end === -1) {
+        end = html.indexOf('}', match.index);
+      }
+      if (end === -1) {
+        end = Math.min(html.length, match.index + 1800);
+      }
+
+      const snippet = html.slice(start, end + 1);
+      const authorMatch = snippet.match(/authorname:"([^"]+)"/);
+      if (authorMatch && normalizedAuthor) {
+        const embeddedAuthor = decodeSerializedField(authorMatch[1]).trim().toLowerCase();
+        if (embeddedAuthor && embeddedAuthor !== normalizedAuthor) continue;
+      }
+
+      const idMatch = snippet.match(/id:(d+)/);
+      const descriptionMatch = snippet.match(/description:"([^"]*)"/);
+      const categorySlugMatch = snippet.match(/pageUrl:"([^"]+)"/);
+      const ratingMatch = snippet.match(/rate_all:([0-9.]+)/);
+      const dateMatch = snippet.match(/date_approve:"([^"]+)"/);
+      const viewsMatch = snippet.match(/view_count:(d+)/);
+      const commentsMatch = snippet.match(/comment_count:(d+)/);
+      const wordsMatch = snippet.match(/words_count:(d+)/);
+
+      const categorySlug = categorySlugMatch ? decodeSerializedField(categorySlugMatch[1]).trim() : '';
+      itemsBySlug.set(slug, {
+        id: idMatch ? idMatch[1] : slug,
+        slug,
+        url: slug,
+        title,
+        description: descriptionMatch ? decodeSerializedField(descriptionMatch[1]).trim() : '',
+        category: titleFromCategorySlug(categorySlug),
+        categorySlug,
+        rating: ratingMatch ? parseFloat(ratingMatch[1]) : 0,
+        voteCount: 0,
+        views: viewsMatch ? parseInt(viewsMatch[1], 10) : 0,
+        date: dateMatch ? decodeSerializedField(dateMatch[1]).trim() : '',
+        dateFormatted: dateMatch ? decodeSerializedField(dateMatch[1]).trim() : '',
+        pageCount: 1,
+        seriesId: null,
+        seriesTitle: null,
+        seriesIndex: 0,
+        isSeries: false,
+        chapters: null,
+        author: author,
+        authorName: authorName || author,
+        wordCount: wordsMatch ? parseInt(wordsMatch[1], 10) : 0,
+        hot: /is_hot:!0/.test(snippet),
+        commentCount: commentsMatch ? parseInt(commentsMatch[1], 10) : 0,
+      });
+    }
+
+    return {
+      authorName: authorName || author,
+      items: Array.from(itemsBySlug.values()),
+    };
+  }
+
   async function fetchCatalogFromCurrentPage(author, onProgress) {
     let parsed = extractCatalogFromDocument(document, author);
+    const currentPageTotal = extractAuthorStoryTotal(document);
     if (parsed.items.length > 0 && onProgress) {
       onProgress(parsed.items.length, parsed.items.length);
     }
@@ -595,6 +728,22 @@
     const html = await response.text();
     const doc = new DOMParser().parseFromString(html, 'text/html');
     parsed = extractCatalogFromDocument(doc, author);
+    const allPageTotal = extractAuthorStoryTotal(doc);
+    const expectedTotal = Math.max(currentPageTotal, allPageTotal);
+
+    if (expectedTotal > 0) {
+      Logger.info('Author page reports ' + expectedTotal + ' published stories.');
+    }
+
+    if (parsed.items.length < expectedTotal) {
+      Logger.warn('Visible author listing only yielded ' + parsed.items.length + ' stories. Inspecting embedded page data...');
+      const embeddedParsed = extractCatalogFromEmbeddedData(html, author, parsed.authorName);
+      if (embeddedParsed.items.length > parsed.items.length) {
+        Logger.info('Embedded page data yielded ' + embeddedParsed.items.length + ' unique stories.');
+        parsed = embeddedParsed;
+      }
+    }
+
     if (onProgress && parsed.items.length > 0) {
       onProgress(parsed.items.length, parsed.items.length);
     }
@@ -1552,16 +1701,208 @@
     return { buildEPUB, buildCombinedEPUB };
   })();
 
+  const StoredZIPBuilder = (() => {
+    const ZIP_VERSION = 20;
+    const STORE_METHOD = 0;
+    const UTF8_FLAG = 0x0800;
+    const LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
+    const CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
+    const END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
+    const encoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+    const crcTable = (() => {
+      const table = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        let crc = i;
+        for (let bit = 0; bit < 8; bit++) {
+          crc = (crc & 1) ? (0xedb88320 ^ (crc >>> 1)) : (crc >>> 1);
+        }
+        table[i] = crc >>> 0;
+      }
+      return table;
+    })();
+
+    function encodeUTF8(text) {
+      const value = String(text == null ? '' : text);
+      if (encoder) return encoder.encode(value);
+
+      const escaped = unescape(encodeURIComponent(value));
+      const bytes = new Uint8Array(escaped.length);
+      for (let i = 0; i < escaped.length; i++) {
+        bytes[i] = escaped.charCodeAt(i);
+      }
+      return bytes;
+    }
+
+    function toUint8Array(data) {
+      if (data instanceof Uint8Array) return data;
+      if (data instanceof ArrayBuffer) return new Uint8Array(data);
+      return encodeUTF8(data);
+    }
+
+    function computeCRC32(bytes) {
+      let crc = 0xffffffff;
+      for (let i = 0; i < bytes.length; i++) {
+        crc = crcTable[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+      }
+      return (crc ^ 0xffffffff) >>> 0;
+    }
+
+    function getDosTimestamp(input) {
+      const date = input instanceof Date ? new Date(input.getTime()) : new Date();
+      const year = Math.min(Math.max(date.getFullYear(), 1980), 2107);
+      const month = Math.min(Math.max(date.getMonth() + 1, 1), 12);
+      const day = Math.min(Math.max(date.getDate(), 1), 31);
+      const hours = Math.min(Math.max(date.getHours(), 0), 23);
+      const minutes = Math.min(Math.max(date.getMinutes(), 0), 59);
+      const seconds = Math.min(Math.max(Math.floor(date.getSeconds() / 2), 0), 29);
+
+      return {
+        date: ((year - 1980) << 9) | (month << 5) | day,
+        time: (hours << 11) | (minutes << 5) | seconds,
+      };
+    }
+
+    function writeUint16(view, offset, value) {
+      view.setUint16(offset, value & 0xffff, true);
+    }
+
+    function writeUint32(view, offset, value) {
+      view.setUint32(offset, value >>> 0, true);
+    }
+
+    async function yieldIfNeeded(index) {
+      if (index % 8 === 0) {
+        await sleep(0);
+      }
+    }
+
+    async function buildArchive(files, onProgress, shouldCancel) {
+      const normalizedFiles = files.map(file => {
+        const nameBytes = encodeUTF8(file.name);
+        const dataBytes = toUint8Array(file.data);
+        const dos = getDosTimestamp(file.date);
+        return {
+          name: String(file.name),
+          nameBytes,
+          dataBytes,
+          crc32: computeCRC32(dataBytes),
+          size: dataBytes.length,
+          dosDate: dos.date,
+          dosTime: dos.time,
+          localOffset: 0,
+        };
+      });
+
+      let localSectionSize = 0;
+      let centralSectionSize = 0;
+      normalizedFiles.forEach(file => {
+        localSectionSize += 30 + file.nameBytes.length + file.size;
+        centralSectionSize += 46 + file.nameBytes.length;
+      });
+
+      const endSectionSize = 22;
+      const output = new Uint8Array(localSectionSize + centralSectionSize + endSectionSize);
+      const view = new DataView(output.buffer);
+      const totalStages = Math.max(1, normalizedFiles.length + 1);
+      let offset = 0;
+
+      for (let i = 0; i < normalizedFiles.length; i++) {
+        if (shouldCancel && shouldCancel()) throw makeAbortError();
+        const file = normalizedFiles[i];
+        if (onProgress) {
+          onProgress(i, totalStages, 'Writing ZIP entry: ' + file.name + ' (' + i + '/' + normalizedFiles.length + ')');
+        }
+
+        file.localOffset = offset;
+        writeUint32(view, offset, LOCAL_FILE_HEADER_SIGNATURE);
+        writeUint16(view, offset + 4, ZIP_VERSION);
+        writeUint16(view, offset + 6, UTF8_FLAG);
+        writeUint16(view, offset + 8, STORE_METHOD);
+        writeUint16(view, offset + 10, file.dosTime);
+        writeUint16(view, offset + 12, file.dosDate);
+        writeUint32(view, offset + 14, file.crc32);
+        writeUint32(view, offset + 18, file.size);
+        writeUint32(view, offset + 22, file.size);
+        writeUint16(view, offset + 26, file.nameBytes.length);
+        writeUint16(view, offset + 28, 0);
+        offset += 30;
+
+        output.set(file.nameBytes, offset);
+        offset += file.nameBytes.length;
+        output.set(file.dataBytes, offset);
+        offset += file.size;
+
+        await yieldIfNeeded(i + 1);
+      }
+
+      const centralDirectoryOffset = offset;
+      if (onProgress) {
+        onProgress(normalizedFiles.length, totalStages, 'Finalizing ZIP directory...');
+      }
+
+      for (let i = 0; i < normalizedFiles.length; i++) {
+        if (shouldCancel && shouldCancel()) throw makeAbortError();
+        const file = normalizedFiles[i];
+
+        writeUint32(view, offset, CENTRAL_DIRECTORY_SIGNATURE);
+        writeUint16(view, offset + 4, ZIP_VERSION);
+        writeUint16(view, offset + 6, ZIP_VERSION);
+        writeUint16(view, offset + 8, UTF8_FLAG);
+        writeUint16(view, offset + 10, STORE_METHOD);
+        writeUint16(view, offset + 12, file.dosTime);
+        writeUint16(view, offset + 14, file.dosDate);
+        writeUint32(view, offset + 16, file.crc32);
+        writeUint32(view, offset + 20, file.size);
+        writeUint32(view, offset + 24, file.size);
+        writeUint16(view, offset + 28, file.nameBytes.length);
+        writeUint16(view, offset + 30, 0);
+        writeUint16(view, offset + 32, 0);
+        writeUint16(view, offset + 34, 0);
+        writeUint16(view, offset + 36, 0);
+        writeUint32(view, offset + 38, 0);
+        writeUint32(view, offset + 42, file.localOffset);
+        offset += 46;
+
+        output.set(file.nameBytes, offset);
+        offset += file.nameBytes.length;
+
+        await yieldIfNeeded(normalizedFiles.length + i + 1);
+      }
+
+      const centralDirectorySize = offset - centralDirectoryOffset;
+      writeUint32(view, offset, END_OF_CENTRAL_DIRECTORY_SIGNATURE);
+      writeUint16(view, offset + 4, 0);
+      writeUint16(view, offset + 6, 0);
+      writeUint16(view, offset + 8, normalizedFiles.length);
+      writeUint16(view, offset + 10, normalizedFiles.length);
+      writeUint32(view, offset + 12, centralDirectorySize);
+      writeUint32(view, offset + 16, centralDirectoryOffset);
+      writeUint16(view, offset + 20, 0);
+      offset += 22;
+
+      if (onProgress) {
+        onProgress(totalStages, totalStages, 'ZIP archive ready');
+      }
+
+      return new Blob([output], { type: 'application/zip' });
+    }
+
+    return { buildArchive };
+  })();
+
   // ============================================================
   // PHASE 8: ZIP PACKAGE GENERATOR
   // ============================================================
 
   const ZIPBuilder = (() => {
     async function buildCollection(author, authorName, downloadedStories, selectedFormats, exportMode, onProgress, errors, shouldCancel) {
-      const zip = new JSZip();
-      const htmlFolder = selectedFormats.html ? zip.folder('html') : null;
-      const epubFolder = selectedFormats.epub ? zip.folder('epub') : null;
-      const txtFolder = selectedFormats.txt ? zip.folder('txt') : null;
+      const txtOnlyArchive = !!selectedFormats.txt && !selectedFormats.html && !selectedFormats.epub;
+      const useStoredArchive = txtOnlyArchive;
+      const zip = useStoredArchive ? null : new JSZip();
+      const htmlFolder = selectedFormats.html && zip ? zip.folder('html') : null;
+      const epubFolder = selectedFormats.epub && zip ? zip.folder('epub') : null;
+      const txtFolder = selectedFormats.txt && zip ? zip.folder('txt') : null;
+      const storedFiles = [];
       const exportGroups = exportMode === 'combined'
         ? [buildSelectedCollectionGroup(author, authorName, downloadedStories)]
         : buildExportGroups(downloadedStories);
@@ -1579,16 +1920,36 @@
       let processed = 0;
       const errorLog = [...errors];
       const selectedFormatCount = ['html', 'epub', 'txt'].filter(fmt => !!selectedFormats[fmt]).length;
+      const exportUnitTotal = exportMode === 'combined'
+        ? exportGroups.length
+        : exportGroups.reduce((sum, group) => sum + group.stories.length, 0);
+
+      function updateZipPreparationProgress(label) {
+        if (!onProgress) return;
+        const current = Math.max(0, processed);
+        const total = Math.max(1, exportUnitTotal);
+        onProgress(current, total, 'Preparing ZIP files: ' + label + ' (' + current + '/' + total + ')');
+      }
+
+      async function yieldDuringZipWork() {
+        if (shouldCancel && shouldCancel()) throw makeAbortError();
+        await sleep(0);
+        if (shouldCancel && shouldCancel()) throw makeAbortError();
+      }
+
+      function addStoredArchiveFile(name, data) {
+        storedFiles.push({ name, data, date: new Date() });
+      }
 
       for (const group of exportGroups) {
         if (shouldCancel && shouldCancel()) {
           throw makeAbortError();
         }
-        processed++;
-        if (onProgress) onProgress(processed, exportGroups.length, group.title);
 
         try {
           if (exportMode === 'combined') {
+            processed++;
+            updateZipPreparationProgress(group.title);
             const entry = {
               title: group.title,
               slug: group.slug,
@@ -1605,6 +1966,7 @@
               const html = group.stories.length === 1 ? HTMLBuilder.buildStoryHTML(group.stories[0]) : HTMLBuilder.buildCombinedHTML(group);
               htmlFolder.file(filename, html);
               entry.html = 'html/' + filename;
+              await yieldDuringZipWork();
             }
 
             if (selectedFormats.epub && epubFolder) {
@@ -1617,22 +1979,31 @@
               const filename = HTMLBuilder.groupFilename(group) + '.epub';
               epubFolder.file(filename, arrayBuffer);
               entry.epub = 'epub/' + filename;
+              await yieldDuringZipWork();
             }
 
-            if (selectedFormats.txt && txtFolder) {
+            if (selectedFormats.txt) {
               if (shouldCancel && shouldCancel()) throw makeAbortError();
               const filename = HTMLBuilder.groupFilename(group) + '.txt';
               const text = group.stories.length === 1
                 ? TextBuilder.buildStoryText(group.stories[0])
                 : TextBuilder.buildCombinedText(group);
-              txtFolder.file(filename, text);
               entry.txt = 'txt/' + filename;
+              if (useStoredArchive) {
+                addStoredArchiveFile(entry.txt, text);
+              } else if (txtFolder) {
+                txtFolder.file(filename, text);
+              }
+              await yieldDuringZipWork();
             }
 
             manifest.entries.push(entry);
+            await yieldDuringZipWork();
           } else {
             for (const storyData of group.stories) {
               if (shouldCancel && shouldCancel()) throw makeAbortError();
+              processed++;
+              updateZipPreparationProgress(storyData.title);
               const entry = {
                 title: group.isSeries ? group.title + ' — ' + storyData.title : storyData.title,
                 slug: storyData.slug,
@@ -1648,6 +2019,7 @@
                 const filename = HTMLBuilder.storyFilename(storyData) + '.html';
                 htmlFolder.file(filename, HTMLBuilder.buildStoryHTML(storyData));
                 entry.html = 'html/' + filename;
+                await yieldDuringZipWork();
               }
 
               if (selectedFormats.epub && epubFolder) {
@@ -1658,16 +2030,23 @@
                 const filename = HTMLBuilder.storyFilename(storyData) + '.epub';
                 epubFolder.file(filename, arrayBuffer);
                 entry.epub = 'epub/' + filename;
+                await yieldDuringZipWork();
               }
 
-              if (selectedFormats.txt && txtFolder) {
+              if (selectedFormats.txt) {
                 if (shouldCancel && shouldCancel()) throw makeAbortError();
                 const filename = HTMLBuilder.storyFilename(storyData) + '.txt';
-                txtFolder.file(filename, TextBuilder.buildStoryText(storyData));
                 entry.txt = 'txt/' + filename;
+                if (useStoredArchive) {
+                  addStoredArchiveFile(entry.txt, TextBuilder.buildStoryText(storyData));
+                } else if (txtFolder) {
+                  txtFolder.file(filename, TextBuilder.buildStoryText(storyData));
+                }
+                await yieldDuringZipWork();
               }
 
               manifest.entries.push(entry);
+              await yieldDuringZipWork();
             }
           }
         } catch (err) {
@@ -1678,18 +2057,57 @@
 
       // Index HTML
       const indexHTML = HTMLBuilder.buildIndexHTML(author, authorName, manifest.entries, exportMode);
-      zip.file('index.html', indexHTML);
+      if (useStoredArchive) {
+        addStoredArchiveFile('index.html', indexHTML);
+      } else if (zip) {
+        zip.file('index.html', indexHTML);
+      }
 
       // Manifest
-      zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+      if (useStoredArchive) {
+        addStoredArchiveFile('manifest.json', JSON.stringify(manifest, null, 2));
+      } else if (zip) {
+        zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+      }
 
       // Errors log
       if (errorLog.length > 0) {
         const errText = errorLog.map(e => '[ERROR] ' + e.story + ': ' + e.error).join('\n');
-        zip.file('errors.log', errText);
+        if (useStoredArchive) {
+          addStoredArchiveFile('errors.log', errText);
+        } else if (zip) {
+          zip.file('errors.log', errText);
+        }
       }
 
-      return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+      if (useStoredArchive) {
+        if (onProgress) {
+          onProgress(0, Math.max(1, storedFiles.length + 1), 'Writing ZIP archive...');
+        }
+        return StoredZIPBuilder.buildArchive(storedFiles, onProgress, shouldCancel);
+      }
+
+      const zipCompression = txtOnlyArchive ? 'STORE' : 'DEFLATE';
+      const compressionOptions = txtOnlyArchive ? undefined : { level: 1 };
+
+      if (onProgress) {
+        onProgress(0, 100, 'Compressing archive...');
+      }
+
+      return zip.generateAsync(
+        { type: 'blob', compression: zipCompression, compressionOptions, streamFiles: true },
+        (metadata) => {
+          if (shouldCancel && shouldCancel()) {
+            throw makeAbortError();
+          }
+          if (!onProgress) return;
+
+          const percent = Math.max(0, Math.min(100, metadata && typeof metadata.percent === 'number' ? metadata.percent : 0));
+          const rounded = Math.round(percent);
+          const currentFile = metadata && metadata.currentFile ? String(metadata.currentFile) : 'archive';
+          onProgress(percent, 100, 'Compressing ZIP: ' + rounded + '% • ' + currentFile);
+        }
+      );
     }
 
     return { buildCollection };
