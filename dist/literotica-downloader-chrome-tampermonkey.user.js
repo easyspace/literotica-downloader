@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Literotica Downloader for Chrome / Tampermonkey
 // @namespace    https://studios.easyspace.in
-// @version      2.1.9
+// @version      2.1.10
 // @description  Download complete author libraries from Literotica using the site HTML. Supports HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
 // @author       easyspace
 // @license      All Rights Reserved
@@ -27,7 +27,7 @@
 // ==/UserScript==
 
 /* ============================================================
-   LITEROTICA DOWNLOADER V2
+   LITEROTICA DOWNLOADER
    Production-Quality Author Library Downloader
    
    Architecture:
@@ -51,11 +51,12 @@
   // ============================================================
 
   const API_BASE = 'https://www.literotica.com/api/3';
-  const SCRIPT_VERSION = '2.1.9';
+  const SCRIPT_VERSION = '2.1.10';
   const REQUEST_DELAY_MIN = 300;
   const REQUEST_DELAY_MAX = 500;
   const MAX_RETRIES = 3;
   const RETRY_BASE_DELAY = 1000;
+  const LARGE_BATCH_WARNING_THRESHOLD = 30;
   const ALLOWED_HOSTS = new Set(['www.literotica.com', 'literotica.com']);
 
   console.log('[LitDL] Bootstrap start (v' + SCRIPT_VERSION + ') on ' + window.location.href);
@@ -461,6 +462,55 @@
     return value == null ? '' : String(value);
   }
 
+  function cleanStoryTitle(value) {
+    return normalizeStoryMarkup(value == null ? '' : String(value)).trim();
+  }
+
+  function normalizeStoryMarkup(value) {
+    if (value == null) return '';
+
+    const newline = String.fromCharCode(10);
+    const carriageReturn = String.fromCharCode(13);
+    const slash = String.fromCharCode(92);
+    const bookmarkLabels = ['bookmark story', 'bookmarkstory'];
+    let text = String(value)
+      .split(carriageReturn + newline).join(newline)
+      .split(carriageReturn).join(newline);
+
+    bookmarkLabels.forEach(bookmarkLabel => {
+      let lower = text.toLowerCase();
+      while (lower.indexOf(bookmarkLabel) !== -1) {
+        const index = lower.indexOf(bookmarkLabel);
+        text = text.slice(0, index) + text.slice(index + bookmarkLabel.length);
+        lower = text.toLowerCase();
+      }
+    });
+
+    while (text.indexOf(slash + slash) !== -1) {
+      text = text.split(slash + slash).join(newline + newline);
+    }
+
+    text = text
+      .split(newline)
+      .map(line => {
+        let nextLine = line;
+        while (nextLine.startsWith(slash)) nextLine = nextLine.slice(1);
+        while (nextLine.endsWith(slash)) nextLine = nextLine.slice(0, -1);
+        return nextLine.trim();
+      })
+      .join(newline);
+
+    while (text.indexOf(slash) !== -1) {
+      text = text.split(slash).join('');
+    }
+
+    while (text.indexOf(newline + newline + newline) !== -1) {
+      text = text.split(newline + newline + newline).join(newline + newline);
+    }
+
+    return text.trim();
+  }
+
   function escapeRegex(str) {
     return String(str || '').replace(new RegExp('[-/\\^$*+?.()|[\]{}]', 'g'), '\$&');
   }
@@ -609,12 +659,43 @@
     return base;
   }
 
+  function buildCatalogItem(overrides = {}) {
+    const dateValue = overrides.date || '';
+    return {
+      id: overrides.id || overrides.slug || overrides.url || '',
+      slug: overrides.slug || overrides.url || overrides.id || '',
+      url: overrides.url || overrides.slug || overrides.id || '',
+      title: cleanStoryTitle(overrides.title || 'Untitled'),
+      description: normalizeStoryMarkup(overrides.description || ''),
+      category: overrides.category || 'Unknown',
+      categorySlug: overrides.categorySlug || '',
+      rating: typeof overrides.rating === 'number' ? overrides.rating : parseFloat(overrides.rating || 0),
+      voteCount: parseInt(overrides.voteCount || 0, 10) || 0,
+      views: parseInt(overrides.views || 0, 10) || 0,
+      date: dateValue,
+      dateFormatted: overrides.dateFormatted || formatDateDisplay(dateValue),
+      pageCount: parseInt(overrides.pageCount || 1, 10) || 1,
+      seriesId: overrides.seriesId || null,
+      seriesTitle: overrides.seriesTitle || null,
+      seriesIndex: parseInt(overrides.seriesIndex || 0, 10) || 0,
+      isSeries: false,
+      chapters: null,
+      author: overrides.author || '',
+      authorName: overrides.authorName || overrides.author || '',
+      wordCount: parseInt(overrides.wordCount || 0, 10) || 0,
+      hot: !!overrides.hot,
+      commentCount: parseInt(overrides.commentCount || 0, 10) || 0,
+    };
+  }
+
   function extractCatalogFromDocument(doc, author) {
     const items = [];
     const seen = new Set();
     const authorName = doc.querySelector('meta[property="profile:username"]')?.getAttribute('content')
       || doc.querySelector('meta[name="author"]')?.getAttribute('content')
       || author;
+    const truncatedSeries = [];
+    const seenSeriesUrls = new Set();
 
     const cards = Array.from(doc.querySelectorAll('[role="article"]'));
     cards.forEach(card => {
@@ -635,12 +716,12 @@
       const dateMatch = text.match(/\b\d{1,2}\/\d{1,2}\/\d{4}\b/);
       const ratingMatch = text.match(/\b([0-4]\.\d{1,2}|5(?:\.0{1,2})?)\b/);
 
-      items.push({
+      items.push(buildCatalogItem({
         id: slug,
         slug,
         url: slug,
         title,
-        description,
+        description: normalizeStoryMarkup(description),
         category: category || 'Unknown',
         categorySlug,
         rating: ratingMatch ? parseFloat(ratingMatch[1]) : 0,
@@ -658,10 +739,87 @@
         authorName,
         wordCount: 0,
         hot: false,
+      }));
+    });
+
+    const truncatedButtons = Array.from(doc.querySelectorAll('button'));
+    truncatedButtons.forEach(button => {
+      const label = normalizeStoryMarkup(button.textContent || '').replace(/s+/g, ' ').trim();
+      const match = label.match(/^View Fulls+(d+)s+Part Series$/i);
+      if (!match) return;
+
+      const container = button.closest('div');
+      const candidateRoots = [
+        button.parentElement,
+        container,
+        container?.nextElementSibling,
+        container?.parentElement,
+        container?.parentElement?.nextElementSibling,
+      ].filter(Boolean);
+      let seriesLink = null;
+      for (const root of candidateRoots) {
+        seriesLink = root.querySelector ? root.querySelector('a[href*="/series/"]') : null;
+        if (seriesLink) break;
+      }
+      if (!seriesLink) return;
+
+      const seriesUrl = seriesLink.getAttribute('href') || seriesLink.href || '';
+      const absoluteSeriesUrl = (() => {
+        try {
+          return new URL(seriesUrl, window.location.origin).toString();
+        } catch {
+          return seriesUrl;
+        }
+      })();
+      if (!absoluteSeriesUrl || seenSeriesUrls.has(absoluteSeriesUrl)) return;
+      seenSeriesUrls.add(absoluteSeriesUrl);
+
+      const seriesTitle = cleanStoryTitle(seriesLink.textContent || 'Series');
+      truncatedSeries.push({
+        id: absoluteSeriesUrl,
+        url: absoluteSeriesUrl,
+        title: seriesTitle,
+        expectedParts: parseInt(match[1], 10) || 0,
       });
     });
 
-    return { authorName, items };
+    return { authorName, items, truncatedSeries };
+  }
+
+  function extractTruncatedSeriesFromHtml(html) {
+    if (!html) return [];
+
+    const results = [];
+    const seen = new Set();
+    const slash = String.fromCharCode(92);
+    const pattern = new RegExp(
+      'View Full' + slash + 's+(' + slash + 'd+)' + slash + 's+Part Series[' + slash + 's' + slash + 'S]{0,2500}?href="([^"]*' + slash + '/series' + slash + '/[^"#?]+)"[' + slash + 's' + slash + 'S]{0,400}?>([^<]+)<',
+      'g'
+    );
+    let match;
+
+    while ((match = pattern.exec(html)) !== null) {
+      const parts = parseInt(match[1], 10) || 0;
+      const rawUrl = decodeSerializedField(match[2]).trim();
+      const title = cleanStoryTitle(decodeSerializedField(match[3]).trim() || 'Series');
+      if (!rawUrl || !title) continue;
+
+      let absoluteUrl = rawUrl;
+      try {
+        absoluteUrl = new URL(rawUrl, window.location.origin).toString();
+      } catch { }
+      if (seen.has(absoluteUrl)) continue;
+      seen.add(absoluteUrl);
+
+      results.push({
+        id: absoluteUrl,
+        url: absoluteUrl,
+        title,
+        expectedParts: parts,
+      });
+    }
+
+    return results;
   }
 
   function extractAuthorStoryTotal(doc) {
@@ -688,7 +846,6 @@
   }
 
   function extractCatalogFromEmbeddedData(html, author, authorName) {
-    const normalizedAuthor = String(author || '').trim().toLowerCase();
     if (!html) {
       return { authorName: authorName || author, items: [] };
     }
@@ -698,26 +855,13 @@
     let match;
 
     while ((match = recordRegex.exec(html)) !== null) {
-      const title = decodeSerializedField(match[1]).trim();
+      const title = cleanStoryTitle(decodeSerializedField(match[1]).trim());
       const slug = decodeSerializedField(match[2]).trim();
       if (!slug || !title || itemsBySlug.has(slug)) continue;
 
-      const recordAnchor = html.lastIndexOf('allow_vote:', match.index);
-      const start = recordAnchor !== -1 ? recordAnchor : Math.max(0, match.index - 1800);
-      let end = html.indexOf('},$R[', match.index);
-      if (end === -1) {
-        end = html.indexOf('}', match.index);
-      }
-      if (end === -1) {
-        end = Math.min(html.length, match.index + 1800);
-      }
-
-      const snippet = html.slice(start, end + 1);
-      const authorMatch = snippet.match(/authorname:"([^"]+)"/);
-      if (authorMatch && normalizedAuthor) {
-        const embeddedAuthor = decodeSerializedField(authorMatch[1]).trim().toLowerCase();
-        if (embeddedAuthor && embeddedAuthor !== normalizedAuthor) continue;
-      }
+      const start = Math.max(0, match.index - 2400);
+      const end = Math.min(html.length, match.index + 2400);
+      const snippet = html.slice(start, end);
 
       const idMatch = snippet.match(/id:(d+)/);
       const descriptionMatch = snippet.match(/description:"([^"]*)"/);
@@ -729,12 +873,12 @@
       const wordsMatch = snippet.match(/words_count:(d+)/);
 
       const categorySlug = categorySlugMatch ? decodeSerializedField(categorySlugMatch[1]).trim() : '';
-      itemsBySlug.set(slug, {
+      itemsBySlug.set(slug, buildCatalogItem({
         id: idMatch ? idMatch[1] : slug,
         slug,
         url: slug,
         title,
-        description: descriptionMatch ? decodeSerializedField(descriptionMatch[1]).trim() : '',
+        description: descriptionMatch ? normalizeStoryMarkup(decodeSerializedField(descriptionMatch[1]).trim()) : '',
         category: titleFromCategorySlug(categorySlug),
         categorySlug,
         rating: ratingMatch ? parseFloat(ratingMatch[1]) : 0,
@@ -753,7 +897,7 @@
         wordCount: wordsMatch ? parseInt(wordsMatch[1], 10) : 0,
         hot: /is_hot:!0/.test(snippet),
         commentCount: commentsMatch ? parseInt(commentsMatch[1], 10) : 0,
-      });
+      }));
     }
 
     return {
@@ -762,11 +906,159 @@
     };
   }
 
+  function mergeCatalogItems() {
+    const merged = new Map();
+    for (const list of arguments) {
+      if (!Array.isArray(list)) continue;
+      list.forEach(item => {
+        const normalized = normalizeStory(item);
+        const slug = normalized.slug || normalized.id;
+        if (!slug) return;
+
+        if (!merged.has(slug)) {
+          merged.set(slug, normalized);
+          return;
+        }
+
+        const current = merged.get(slug);
+        merged.set(slug, {
+          ...current,
+          ...normalized,
+          title: cleanStoryTitle(normalized.title || current.title),
+          description: normalizeStoryMarkup(normalized.description || current.description || ''),
+          category: normalized.category && normalized.category !== 'Unknown' ? normalized.category : current.category,
+          categorySlug: normalized.categorySlug || current.categorySlug,
+          rating: normalized.rating || current.rating,
+          views: normalized.views || current.views,
+          date: normalized.date || current.date,
+          dateFormatted: normalized.dateFormatted || current.dateFormatted,
+          pageCount: normalized.pageCount || current.pageCount,
+          seriesId: normalized.seriesId || current.seriesId,
+          seriesTitle: normalized.seriesTitle || current.seriesTitle,
+          seriesIndex: normalized.seriesIndex || current.seriesIndex,
+          author: normalized.author || current.author,
+          authorName: normalized.authorName || current.authorName,
+          wordCount: normalized.wordCount || current.wordCount,
+          hot: normalized.hot || current.hot,
+          commentCount: normalized.commentCount || current.commentCount,
+        });
+      });
+    }
+    return Array.from(merged.values());
+  }
+
+  function dedupeCatalogByTitle(items, author) {
+    const storyItems = Array.isArray(items) ? items.slice() : [];
+    const groupedByTitle = new Map();
+    const normalizedAuthor = String(author || '').trim().toLowerCase();
+
+    storyItems.forEach(item => {
+      const normalized = normalizeStory(item);
+      const titleKey = cleanStoryTitle(normalized.title || '').toLowerCase();
+      if (!titleKey) return;
+      if (!groupedByTitle.has(titleKey)) groupedByTitle.set(titleKey, []);
+      groupedByTitle.get(titleKey).push(normalized);
+    });
+
+    const keepBySlug = new Set();
+    storyItems.forEach(item => {
+      const normalized = normalizeStory(item);
+      const slug = normalized.slug || normalized.id;
+      if (slug) keepBySlug.add(slug);
+    });
+
+    groupedByTitle.forEach(group => {
+      if (group.length < 2) return;
+      const exactAuthorMatches = group.filter(entry => {
+        const entryAuthor = String(entry.author || entry.authorName || '').trim().toLowerCase();
+        return normalizedAuthor && entryAuthor === normalizedAuthor;
+      });
+      const candidates = exactAuthorMatches.length > 0 ? exactAuthorMatches : group;
+      candidates.sort((a, b) => {
+        const aScore = (a.views || 0) + (a.wordCount || 0) + (a.commentCount || 0);
+        const bScore = (b.views || 0) + (b.wordCount || 0) + (b.commentCount || 0);
+        return bScore - aScore;
+      });
+      const winner = candidates[0];
+      group.forEach(entry => {
+        const slug = entry.slug || entry.id;
+        if (!slug) return;
+        if ((winner.slug || winner.id) !== slug) {
+          keepBySlug.delete(slug);
+        }
+      });
+    });
+
+    return storyItems.filter(item => {
+      const normalized = normalizeStory(item);
+      const slug = normalized.slug || normalized.id;
+      return slug && keepBySlug.has(slug);
+    });
+  }
+
+  async function fetchTruncatedSeriesItems(seriesRef, author) {
+    const response = await gmFetch(seriesRef.url, {
+      headers: {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      timeout: 30000,
+    });
+    const html = await response.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const authorName = doc.querySelector('meta[name="author"]')?.getAttribute('content')
+      || doc.querySelector('meta[property="profile:username"]')?.getAttribute('content')
+      || author;
+    const seriesTitle = cleanStoryTitle(seriesRef.title
+      || doc.querySelector('meta[property="og:title"]')?.getAttribute('content')?.replace(/s+-s+Story Seriess+-s+Literotica.com$/i, '')
+      || 'Series');
+    const seen = new Set();
+    const items = [];
+    const links = Array.from(doc.querySelectorAll('a[href*="/s/"]'));
+
+    links.forEach((link, index) => {
+      const slug = extractStorySlug(link.getAttribute('href') || link.href || '');
+      const title = cleanStoryTitle(link.textContent || '');
+      if (!slug || !title || seen.has(slug)) return;
+      seen.add(slug);
+
+      const card = link.closest('[role="article"], [class*="series_parts__item"], [class*="works_item"]');
+      const description = normalizeStoryMarkup(card?.querySelector('p')?.textContent || '');
+      const categoryLink = card?.querySelector('a[href*="/c/"], a[href*="/categories/"]');
+      const categoryHref = categoryLink?.getAttribute('href') || categoryLink?.href || '';
+      const categorySlug = categoryHref ? extractStorySlug(categoryHref) : '';
+      const category = cleanStoryTitle(categoryLink?.textContent || '') || titleFromCategorySlug(categorySlug);
+      const cardText = card?.textContent || '';
+      const dateMatch = cardText.match(/\b\d{1,2}\/\d{1,2}\/\d{4}\b/);
+      const ratingMatch = cardText.match(/\b([0-4]\.\d{1,2}|5(?:\.0{1,2})?)\b/);
+
+      items.push(buildCatalogItem({
+        id: slug,
+        slug,
+        url: slug,
+        title,
+        description,
+        category,
+        categorySlug,
+        rating: ratingMatch ? parseFloat(ratingMatch[1]) : 0,
+        date: dateMatch ? dateMatch[0] : '',
+        dateFormatted: dateMatch ? dateMatch[0] : '',
+        pageCount: 1,
+        seriesId: seriesRef.id,
+        seriesTitle,
+        seriesIndex: index + 1,
+        author,
+        authorName,
+      }));
+    });
+
+    return items;
+  }
+
   async function fetchCatalogFromCurrentPage(author, onProgress) {
     let parsed = extractCatalogFromDocument(document, author);
     const currentPageTotal = extractAuthorStoryTotal(document);
     if (parsed.items.length > 0 && onProgress) {
-      onProgress(parsed.items.length, parsed.items.length);
+      onProgress(parsed.items.length, currentPageTotal || parsed.items.length);
     }
 
     Logger.info('Fetching full author listing from /all page...');
@@ -780,25 +1072,94 @@
     const doc = new DOMParser().parseFromString(html, 'text/html');
     parsed = extractCatalogFromDocument(doc, author);
     const allPageTotal = extractAuthorStoryTotal(doc);
-    const expectedTotal = Math.max(currentPageTotal, allPageTotal);
+    const worksPageTotal = Math.max(currentPageTotal, allPageTotal);
+    const visibleCount = parsed.items.length;
 
-    if (expectedTotal > 0) {
-      Logger.info('Author page reports ' + expectedTotal + ' published stories.');
+    if (currentPageTotal > 0 || allPageTotal > 0) {
+      Logger.info('Works page story total: current page=' + currentPageTotal + ', full listing=' + allPageTotal + '.');
     }
+    Logger.info('Visible listing parsed ' + visibleCount + ' stories from the /all page.');
 
-    if (parsed.items.length < expectedTotal) {
-      Logger.warn('Visible author listing only yielded ' + parsed.items.length + ' stories. Inspecting embedded page data...');
+    let mergedItems = parsed.items.slice();
+    let embeddedCount = visibleCount;
+    if (worksPageTotal > 0 && visibleCount < worksPageTotal) {
+      Logger.warn('Visible listing is short of the works-page total. Inspecting embedded list data...');
       const embeddedParsed = extractCatalogFromEmbeddedData(html, author, parsed.authorName);
-      if (embeddedParsed.items.length > parsed.items.length) {
-        Logger.info('Embedded page data yielded ' + embeddedParsed.items.length + ' unique stories.');
-        parsed = embeddedParsed;
+      embeddedCount = embeddedParsed.items.length;
+      Logger.info('Embedded list data yielded ' + embeddedCount + ' unique stories.');
+      if (embeddedCount === worksPageTotal) {
+        Logger.info('Embedded list data already matches the works-page total. Using it as the authoritative base list.');
+        mergedItems = embeddedParsed.items.slice();
+      } else {
+        mergedItems = mergeCatalogItems(parsed.items, embeddedParsed.items);
       }
     }
 
-    if (onProgress && parsed.items.length > 0) {
-      onProgress(parsed.items.length, parsed.items.length);
+    let recoveredFromSeries = 0;
+    const domTruncatedSeries = parsed.truncatedSeries || [];
+    const htmlTruncatedSeries = extractTruncatedSeriesFromHtml(html);
+    const truncatedSeries = (() => {
+      const seen = new Set();
+      const combined = [];
+      [...domTruncatedSeries, ...htmlTruncatedSeries].forEach(entry => {
+        const url = entry?.url || entry?.id || '';
+        if (!url || seen.has(url)) return;
+        seen.add(url);
+        combined.push(entry);
+      });
+      return combined;
+    })();
+    if (truncatedSeries.length > 0 && (worksPageTotal === 0 || mergedItems.length < worksPageTotal)) {
+      Logger.warn('Detected ' + truncatedSeries.length + ' truncated series. Fetching full series pages for hidden chapters...');
+      for (let i = 0; i < truncatedSeries.length; i++) {
+        const seriesRef = truncatedSeries[i];
+        if (onProgress) {
+          onProgress(i, truncatedSeries.length, 'Recovering hidden series: ' + seriesRef.title + ' (' + (i + 1) + '/' + truncatedSeries.length + ')');
+        }
+        try {
+          const seriesItems = await fetchTruncatedSeriesItems(seriesRef, author);
+          const beforeCount = mergedItems.length;
+          mergedItems = mergeCatalogItems(mergedItems, seriesItems);
+          const addedCount = Math.max(0, mergedItems.length - beforeCount);
+          recoveredFromSeries += addedCount;
+          Logger.info('Series recovery: ' + seriesRef.title + ' yielded ' + seriesItems.length + ' chapters (' + addedCount + ' new).');
+        } catch (err) {
+          Logger.warn('Series recovery failed for ' + seriesRef.title + ': ' + err.message);
+        }
+      }
     }
-    return parsed;
+
+    if (worksPageTotal > 0 && mergedItems.length > worksPageTotal) {
+      const dedupedByTitle = dedupeCatalogByTitle(mergedItems, author);
+      if (dedupedByTitle.length < mergedItems.length) {
+        Logger.warn('Removed ' + (mergedItems.length - dedupedByTitle.length) + ' likely duplicate entries after merge.');
+        mergedItems = dedupedByTitle;
+      }
+    }
+
+    const finalCount = mergedItems.length;
+    Logger.info('Final merged catalog count: ' + finalCount + ' stories.');
+    if (worksPageTotal > 0 && finalCount !== worksPageTotal) {
+      Logger.warn('Catalog still differs from works-page total: page reports ' + worksPageTotal + ', parser recovered ' + finalCount + '.');
+    }
+
+    if (onProgress && finalCount > 0) {
+      onProgress(finalCount, worksPageTotal || finalCount, 'Catalog ready: ' + finalCount + (worksPageTotal ? ' of ' + worksPageTotal : '') + ' stories');
+    }
+    return {
+      authorName: parsed.authorName,
+      items: mergedItems,
+      status: {
+        worksPageCurrentTotal: currentPageTotal,
+        worksPageAllTotal: allPageTotal,
+        worksPageTargetTotal: worksPageTotal,
+        visibleCount,
+        embeddedCount,
+        recoveredFromSeries,
+        finalCount,
+        truncatedSeriesCount: truncatedSeries.length,
+      },
+    };
   }
 
   // ============================================================
@@ -810,8 +1171,8 @@
     const story = {
       id: raw.id || raw.url || raw.slug,
       slug: raw.url || raw.slug || raw.id,
-      title: raw.title || 'Untitled',
-      description: raw.description || raw.meta_description || '',
+      title: cleanStoryTitle(raw.title || 'Untitled'),
+      description: normalizeStoryMarkup(raw.description || raw.meta_description || ''),
       category: raw.category_info?.pageTitle || raw.category || 'Unknown',
       categorySlug: raw.category_info?.url || raw.category_url || '',
       rating: parseFloat(raw.rate || raw.rating || raw.voteTotal || 0),
@@ -923,15 +1284,15 @@
     function decodeEmbeddedString(value) {
       if (!value) return '';
       try {
-        return decodeEscapedSequences(JSON.parse('"' + value + '"'));
+        return normalizeStoryMarkup(decodeEscapedSequences(JSON.parse('"' + value + '"')));
       } catch {
         const slash = String.fromCharCode(92);
         const newline = String.fromCharCode(10);
-        return decodeEscapedSequences(value
+        return normalizeStoryMarkup(decodeEscapedSequences(value
           .split(slash + 'r' + slash + 'n').join(newline)
           .split(slash + 'n').join(newline)
           .split(slash + '"').join('"')
-          .split(slash + slash).join(slash));
+          .split(slash + slash).join(slash)));
       }
     }
 
@@ -957,9 +1318,9 @@
         }
       }
 
-      const title = doc.querySelector('meta[property="og:title"]')?.getAttribute('content')
+      const title = cleanStoryTitle(doc.querySelector('meta[property="og:title"]')?.getAttribute('content')
         || doc.title
-        || story.title;
+        || story.title);
 
       const pageLinks = Array.from(doc.querySelectorAll('a[href*="?page="]'))
         .map(link => {
@@ -1015,7 +1376,7 @@
         pages.push({
           pageNum,
           text: payload.text,
-          title: payload.title || (totalPages > 1 ? 'Page ' + pageNum : story.title),
+          title: cleanStoryTitle(payload.title || (totalPages > 1 ? 'Page ' + pageNum : story.title)),
         });
       } catch (err) {
         if (isAbortError(err)) throw err;
@@ -1585,6 +1946,7 @@
       const { title, author, authorName, category, description, sections, slug, dateISO } = book;
       const safeTitle = HTMLBuilder.escapeHtml(title);
       const safeAuthor = HTMLBuilder.escapeHtml(authorName || author);
+      const authorLine = safeAuthor ? '<p class="by">by ' + safeAuthor + '</p>' : '';
 
       // mimetype (must be first, uncompressed)
       zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
@@ -1614,7 +1976,7 @@
 <body>
   <div class="cover">
     <h1>${safeTitle}</h1>
-    <p class="by">by ${safeAuthor}</p>
+    ${authorLine}
     ${description ? '<p class="desc">' + HTMLBuilder.escapeHtml(description) + '</p>' : ''}
   </div>
 </body>
@@ -1671,7 +2033,7 @@
     <dc:creator opf:role="aut">${safeAuthor}</dc:creator>
     <dc:subject>${HTMLBuilder.escapeHtml(category)}</dc:subject>
     <dc:description>${HTMLBuilder.escapeHtml(description)}</dc:description>
-    <dc:publisher>Literotica Downloader V2</dc:publisher>
+    <dc:publisher>Literotica Downloader</dc:publisher>
     <dc:date>${dateISO}</dc:date>
     <dc:language>en</dc:language>
     ${slug ? '<dc:source>https://www.literotica.com/s/' + slug + '</dc:source>' : ''}
@@ -2211,6 +2573,7 @@
       authorName: null,
       authorProfile: null,
       catalog: [],
+      catalogStatus: null,
       grouped: { standalones: [], series: [] },
       selected: new Set(),
       downloading: false,
@@ -2383,6 +2746,8 @@
     let storyListEl = null;
     let statusCountEl = null;
     let selectedCountEl = null;
+    let catalogStatusEl = null;
+    let batchWarningEl = null;
     let isOpen = true;
 
     const CSS = `
@@ -2687,13 +3052,14 @@
 
       panelEl.innerHTML = `
         <div class="litdl-header">
-          <h2>📥 Literotica Downloader <span style="color:#5a3a8a;font-size:10px;font-weight:400;">V2</span></h2>
+          <h2>📥 Literotica Downloader</h2>
           <div class="meta-line">
             <span>Version: <span class="meta-count" id="litdl-version">${SCRIPT_VERSION}</span></span>
             <span>Author: <span class="meta-count" id="litdl-author-name">Detecting...</span></span>
             <span><span class="meta-count" id="litdl-total-count">0</span> stories</span>
             <span><span class="meta-count" id="litdl-selected-count">0</span> selected</span>
           </div>
+          <div id="litdl-catalog-status" style="margin-top:8px;font-size:11px;line-height:1.4;color:#c6c7d8;"></div>
         </div>
         
         <div class="litdl-section">
@@ -2744,6 +3110,7 @@
             <button class="litdl-btn" id="litdl-sel-series">Series</button>
             <button class="litdl-btn" id="litdl-restore-sel">Restore Last</button>
           </div>
+          <div id="litdl-batch-warning" style="display:none;margin-top:10px;padding:8px 10px;border:1px solid rgba(222, 166, 61, 0.35);border-radius:8px;background:rgba(222, 166, 61, 0.08);color:#f0d18a;font-size:11px;line-height:1.4;"></div>
         </div>
         
         <div class="litdl-section">
@@ -2794,6 +3161,8 @@
       storyListEl = panelEl.querySelector('#litdl-story-list');
       statusCountEl = panelEl.querySelector('#litdl-total-count');
       selectedCountEl = panelEl.querySelector('#litdl-selected-count');
+      catalogStatusEl = panelEl.querySelector('#litdl-catalog-status');
+      batchWarningEl = panelEl.querySelector('#litdl-batch-warning');
 
       // Wire up events
       wireEvents();
@@ -2804,7 +3173,7 @@
       // Subscribe to state
       State.subscribe(state => renderState(state));
 
-      Logger.info('Literotica Downloader V2 initialized (v' + SCRIPT_VERSION + ')');
+      Logger.info('Literotica Downloader initialized (v' + SCRIPT_VERSION + ')');
     }
 
     function wireEvents() {
@@ -2937,6 +3306,28 @@
       const authorEl = panelEl.querySelector('#litdl-author-name');
       if (authorEl && state.author) authorEl.textContent = state.authorName || state.author;
 
+      if (catalogStatusEl) {
+        const status = state.catalogStatus;
+        if (status && (status.worksPageCurrentTotal || status.worksPageAllTotal || status.finalCount)) {
+          const targetTotal = status.worksPageTargetTotal || status.finalCount || 0;
+          const mismatch = targetTotal > 0 && status.finalCount !== targetTotal;
+          const statusParts = [
+            'Works page: ' + targetTotal,
+            'Visible: ' + status.visibleCount,
+            'Embedded: ' + status.embeddedCount,
+            'Series recovery: +' + status.recoveredFromSeries,
+            'Final: ' + status.finalCount,
+          ];
+          if (status.truncatedSeriesCount > 0) {
+            statusParts.push('Truncated series: ' + status.truncatedSeriesCount);
+          }
+          catalogStatusEl.textContent = statusParts.join('  •  ');
+          catalogStatusEl.style.color = mismatch ? '#f0d18a' : '#c6c7d8';
+        } else {
+          catalogStatusEl.textContent = '';
+        }
+      }
+
       // Update download button
       const dlBtn = panelEl.querySelector('#litdl-download-btn');
       if (dlBtn) {
@@ -2950,6 +3341,31 @@
         abortBtn.style.display = state.downloading ? 'block' : 'none';
         abortBtn.disabled = !state.downloading || state.cancelRequested;
         abortBtn.textContent = state.cancelRequested ? 'Stopping...' : 'Stop Download';
+      }
+
+      const combinedBtn = panelEl.querySelector('#litdl-mode-combined');
+      const separateBtn = panelEl.querySelector('#litdl-mode-separate');
+      if (combinedBtn && separateBtn) {
+        const canCombine = state.selected.size > 1;
+        combinedBtn.disabled = !canCombine;
+        combinedBtn.style.opacity = canCombine ? '1' : '0.5';
+        combinedBtn.style.cursor = canCombine ? 'pointer' : 'not-allowed';
+
+        if (!canCombine && combinedBtn.classList.contains('active')) {
+          combinedBtn.classList.remove('active');
+          separateBtn.classList.add('active');
+          Settings.set('exportMode', 'separate');
+        }
+      }
+
+      if (batchWarningEl) {
+        const overLimit = state.selected.size > LARGE_BATCH_WARNING_THRESHOLD;
+        batchWarningEl.style.display = overLimit ? 'block' : 'none';
+        if (overLimit) {
+          batchWarningEl.textContent = 'Large batch selected (' + state.selected.size + ' stories). Downloads remain enabled, but bigger runs can be slower or more failure-prone, especially for EPUB and combined exports.';
+        } else {
+          batchWarningEl.textContent = '';
+        }
       }
 
       // Update category filter
@@ -3162,6 +3578,9 @@
     });
 
     Logger.info('Fetching content for ' + selectedStories.length + ' stories...');
+    if (selectedStories.length > LARGE_BATCH_WARNING_THRESHOLD) {
+      Logger.warn('Large batch selected (' + selectedStories.length + ' stories). Downloads remain enabled, but large EPUB and combined exports may take longer.');
+    }
 
     const downloadedStories = [];
     const errors = [];
@@ -3199,9 +3618,9 @@
       const fmtHTML = isFormatEnabled('#litdl-fmt-html', true);
       const fmtEPUB = isFormatEnabled('#litdl-fmt-epub', true);
       const fmtTXT = isFormatEnabled('#litdl-fmt-txt', false);
-      const exportMode = panelEl && panelEl.querySelector('#litdl-mode-separate').classList.contains('active')
-        ? 'separate'
-        : 'combined';
+      const exportMode = selectedStories.length > 1 && panelEl && !panelEl.querySelector('#litdl-mode-separate').classList.contains('active')
+        ? 'combined'
+        : 'separate';
 
       const selectedFormats = { html: fmtHTML, epub: fmtEPUB, txt: fmtTXT };
 
@@ -3330,6 +3749,7 @@
     panelEl = document.getElementById('litdl-panel');
 
     State.setState({ author });
+    State.setState({ catalogStatus: null });
 
     // Restore saved filter settings
     const savedSettings = Settings.all();
@@ -3363,6 +3783,7 @@
         UI.updateProgress(loaded, total || loaded, 'Fetching catalog: ' + loaded + (total ? ' of ' + total : '') + ' entries');
       });
       catalog = parsed.items;
+      State.setState({ catalogStatus: parsed.status || null });
       if (parsed.authorName) {
         State.setState({ authorName: parsed.authorName });
       }
