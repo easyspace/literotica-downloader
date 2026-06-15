@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name        Literotica Downloader for Firefox / Greasemonkey
 // @namespace    https://studios.easyspace.in
-// @version      2.1.6
-// @description  Download complete author libraries from Literotica using the site HTML. Supports ZIP, HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
+// @version      2.1.9
+// @description  Download complete author libraries from Literotica using the site HTML. Supports HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
 // @author       easyspace
 // @license      All Rights Reserved
 // @homepageURL  https://studios.easyspace.in
@@ -46,7 +46,7 @@
   // ============================================================
 
   const API_BASE = 'https://www.literotica.com/api/3';
-  const SCRIPT_VERSION = '2.1.6';
+  const SCRIPT_VERSION = '2.1.9';
   const REQUEST_DELAY_MIN = 300;
   const REQUEST_DELAY_MAX = 500;
   const MAX_RETRIES = 3;
@@ -284,7 +284,6 @@
       'exportHTML',
       'exportEPUB',
       'exportTXT',
-      'exportZIP',
       'exportMode',
       'filterCategory',
       'filterRating',
@@ -300,7 +299,6 @@
         exportHTML: true,
         exportEPUB: false,
         exportTXT: false,
-        exportZIP: true,
         exportMode: 'combined',
         filterCategory: 'all',
         filterRating: 0,
@@ -401,13 +399,61 @@
     if (value == null) return '';
     const raw = String(value);
     try {
-      return JSON.parse('"' + raw + '"');
+      return decodeEscapedSequences(JSON.parse('"' + raw + '"'));
     } catch {
       const slash = String.fromCharCode(92);
-      return raw
+      return decodeEscapedSequences(raw
         .split(slash + '"').join('"')
-        .split(slash + slash).join(slash);
+        .split(slash + slash).join(slash));
     }
+  }
+
+  function decodeEscapedSequences(value) {
+    if (value == null) return '';
+    const input = String(value);
+    return input
+      .replace(/\x([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  }
+
+  function parsePossibleDate(value) {
+    if (value == null || value === '') return null;
+
+    if (value instanceof Date) {
+      return Number.isNaN(value.getTime()) ? null : new Date(value.getTime());
+    }
+
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      const ms = value > 1e12 ? value : value * 1000;
+      const date = new Date(ms);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    const raw = String(value).trim();
+    if (!raw) return null;
+
+    if (/^d+$/.test(raw)) {
+      const numeric = parseInt(raw, 10);
+      return parsePossibleDate(numeric);
+    }
+
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+
+    return null;
+  }
+
+  function formatDateISO(value) {
+    const parsed = parsePossibleDate(value);
+    return parsed ? parsed.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+  }
+
+  function formatDateDisplay(value) {
+    const parsed = parsePossibleDate(value);
+    if (parsed) return parsed.toLocaleDateString();
+    return value == null ? '' : String(value);
   }
 
   function escapeRegex(str) {
@@ -767,7 +813,7 @@
       voteCount: parseInt(raw.total_votes || raw.vote_count || raw.voteCount || 0, 10),
       views: parseInt(raw.view_count || raw.views || raw.totalPageViews || 0, 10),
       date: raw.date_approve || raw.publishDate || raw.date || '',
-      dateFormatted: raw.date_approve ? new Date(raw.date_approve * 1000).toLocaleDateString() : (raw.date || ''),
+      dateFormatted: formatDateDisplay(raw.date_approve || raw.publishDate || raw.date || ''),
       pageCount: parseInt(raw.meta_pages || raw.pages || raw.page_count || 1, 10),
       seriesId: raw.series?.id || raw.seriesId || null,
       seriesTitle: raw.series?.title || raw.seriesTitle || null,
@@ -872,15 +918,15 @@
     function decodeEmbeddedString(value) {
       if (!value) return '';
       try {
-        return JSON.parse('"' + value + '"');
+        return decodeEscapedSequences(JSON.parse('"' + value + '"'));
       } catch {
         const slash = String.fromCharCode(92);
         const newline = String.fromCharCode(10);
-        return value
+        return decodeEscapedSequences(value
           .split(slash + 'r' + slash + 'n').join(newline)
           .split(slash + 'n').join(newline)
           .split(slash + '"').join('"')
-          .split(slash + slash).join(slash);
+          .split(slash + slash).join(slash));
       }
     }
 
@@ -1528,7 +1574,7 @@
       return labelHtml + titleHtml + pagesHTML + footerHtml;
     }
 
-    async function buildEPUBBook(book) {
+    async function buildEPUBBook(book, outputType = 'blob') {
       const zip = new JSZip();
       const uid = generateUUID();
       const { title, author, authorName, category, description, sections, slug, dateISO } = book;
@@ -1659,7 +1705,10 @@
 
       zip.file('OEBPS/toc.ncx', ncx);
 
-      return zip.generateAsync({ type: 'blob', mimeType: 'application/epub+zip' });
+      return zip.generateAsync({
+        type: outputType,
+        mimeType: outputType === 'blob' ? 'application/epub+zip' : undefined
+      });
     }
 
     async function buildEPUB(storyData) {
@@ -1670,12 +1719,28 @@
         category: storyData.category,
         description: storyData.description || '',
         slug: storyData.slug,
-        dateISO: storyData.date ? new Date(storyData.date * 1000).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        dateISO: formatDateISO(storyData.date),
         sections: [{
           title: storyData.title,
           body: buildStorySectionBody(storyData, { showStoryTitle: false }),
         }],
-      });
+      }, 'blob');
+    }
+
+    async function buildEPUBBytes(storyData) {
+      return buildEPUBBook({
+        title: storyData.title,
+        author: storyData.author,
+        authorName: storyData.authorName,
+        category: storyData.category,
+        description: storyData.description || '',
+        slug: storyData.slug,
+        dateISO: formatDateISO(storyData.date),
+        sections: [{
+          title: storyData.title,
+          body: buildStorySectionBody(storyData, { showStoryTitle: false }),
+        }],
+      }, 'uint8array');
     }
 
     async function buildCombinedEPUB(group) {
@@ -1686,7 +1751,7 @@
         category: group.category,
         description: group.description || '',
         slug: group.slug,
-        dateISO: group.date ? new Date(group.date * 1000).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        dateISO: formatDateISO(group.date),
         sections: group.stories.map((storyData, index) => ({
           title: group.isSeries ? 'Chapter ' + (index + 1) + ': ' + storyData.title : storyData.title,
           body: buildStorySectionBody(storyData, {
@@ -1695,10 +1760,30 @@
             chapterLabel: group.isSeries ? 'Chapter ' + (index + 1) : '',
           }),
         })),
-      });
+      }, 'blob');
     }
 
-    return { buildEPUB, buildCombinedEPUB };
+    async function buildCombinedEPUBBytes(group) {
+      return buildEPUBBook({
+        title: group.title,
+        author: group.author,
+        authorName: group.authorName,
+        category: group.category,
+        description: group.description || '',
+        slug: group.slug,
+        dateISO: formatDateISO(group.date),
+        sections: group.stories.map((storyData, index) => ({
+          title: group.isSeries ? 'Chapter ' + (index + 1) + ': ' + storyData.title : storyData.title,
+          body: buildStorySectionBody(storyData, {
+            showStoryTitle: true,
+            headingTag: group.isSeries ? 'h2' : 'h1',
+            chapterLabel: group.isSeries ? 'Chapter ' + (index + 1) : '',
+          }),
+        })),
+      }, 'uint8array');
+    }
+
+    return { buildEPUB, buildEPUBBytes, buildCombinedEPUB, buildCombinedEPUBBytes };
   })();
 
   const StoredZIPBuilder = (() => {
@@ -1972,12 +2057,11 @@
             if (selectedFormats.epub && epubFolder) {
               if (shouldCancel && shouldCancel()) throw makeAbortError();
               Logger.info('Generating combined EPUB: ' + group.title);
-              const epubBlob = group.stories.length === 1
-                ? await EPUBBuilder.buildEPUB(group.stories[0])
-                : await EPUBBuilder.buildCombinedEPUB(group);
-              const arrayBuffer = await epubBlob.arrayBuffer();
+              const epubBytes = group.stories.length === 1
+                ? await EPUBBuilder.buildEPUBBytes(group.stories[0])
+                : await EPUBBuilder.buildCombinedEPUBBytes(group);
               const filename = HTMLBuilder.groupFilename(group) + '.epub';
-              epubFolder.file(filename, arrayBuffer);
+              epubFolder.file(filename, epubBytes);
               entry.epub = 'epub/' + filename;
               await yieldDuringZipWork();
             }
@@ -2025,10 +2109,9 @@
               if (selectedFormats.epub && epubFolder) {
                 if (shouldCancel && shouldCancel()) throw makeAbortError();
                 Logger.info('Generating EPUB: ' + storyData.title);
-                const epubBlob = await EPUBBuilder.buildEPUB(storyData);
-                const arrayBuffer = await epubBlob.arrayBuffer();
+                const epubBytes = await EPUBBuilder.buildEPUBBytes(storyData);
                 const filename = HTMLBuilder.storyFilename(storyData) + '.epub';
-                epubFolder.file(filename, arrayBuffer);
+                epubFolder.file(filename, epubBytes);
                 entry.epub = 'epub/' + filename;
                 await yieldDuringZipWork();
               }
@@ -2664,7 +2747,6 @@
             <button class="litdl-format-toggle active" id="litdl-fmt-html">📄 HTML</button>
             <button class="litdl-format-toggle" id="litdl-fmt-epub">📚 EPUB</button>
             <button class="litdl-format-toggle" id="litdl-fmt-txt">📝 TXT</button>
-            <button class="litdl-format-toggle active" id="litdl-fmt-zip">🗜 ZIP Package</button>
           </div>
           <div class="litdl-section-title" style="margin-top:10px;">File Structure</div>
           <div class="litdl-format-row">
@@ -2762,7 +2844,7 @@
       };
 
       const contentFormats = ['html', 'epub', 'txt'];
-      const allFormatButtons = ['html', 'epub', 'txt', 'zip'].reduce((acc, fmt) => {
+      const allFormatButtons = ['html', 'epub', 'txt'].reduce((acc, fmt) => {
         acc[fmt] = panelEl.querySelector('#litdl-fmt-' + fmt);
         return acc;
       }, {});
@@ -2789,13 +2871,8 @@
         };
       });
 
-      allFormatButtons.zip.onclick = () => {
-        allFormatButtons.zip.classList.toggle('active');
-        Settings.set('exportZip', allFormatButtons.zip.classList.contains('active'));
-      };
-
       // Apply saved format state
-      ['html', 'epub', 'txt', 'zip'].forEach(fmt => {
+      ['html', 'epub', 'txt'].forEach(fmt => {
         const saved = Settings.get('export' + fmt.charAt(0).toUpperCase() + fmt.slice(1));
         if (saved === false) allFormatButtons[fmt].classList.remove('active');
         if (saved === true) allFormatButtons[fmt].classList.add('active');
@@ -3056,8 +3133,9 @@
       Logger.error('FileSaver is not available. Verify @require for FileSaver.js in Tampermonkey.');
       return;
     }
-    if (typeof JSZip === 'undefined') {
-      Logger.error('JSZip is not available. Verify @require for JSZip in Tampermonkey.');
+    const requiresEPUBSupport = panelEl && panelEl.querySelector('#litdl-fmt-epub') && panelEl.querySelector('#litdl-fmt-epub').classList.contains('active');
+    if (requiresEPUBSupport && typeof JSZip === 'undefined') {
+      Logger.error('JSZip is not available. EPUB export requires JSZip.');
       return;
     }
 
@@ -3116,119 +3194,90 @@
       const fmtHTML = isFormatEnabled('#litdl-fmt-html', true);
       const fmtEPUB = isFormatEnabled('#litdl-fmt-epub', true);
       const fmtTXT = isFormatEnabled('#litdl-fmt-txt', false);
-      const fmtZIP = isFormatEnabled('#litdl-fmt-zip', true);
       const exportMode = panelEl && panelEl.querySelector('#litdl-mode-separate').classList.contains('active')
         ? 'separate'
         : 'combined';
 
-      const selectedFormats = { html: fmtHTML, epub: fmtEPUB, txt: fmtTXT, zip: fmtZIP };
+      const selectedFormats = { html: fmtHTML, epub: fmtEPUB, txt: fmtTXT };
 
       if (!fmtHTML && !fmtEPUB && !fmtTXT) {
         Logger.error('Enable HTML, EPUB, or TXT before downloading.');
         return;
       }
 
-      if (!fmtZIP) {
-        if (exportMode === 'combined') {
-          const collectionGroup = buildSelectedCollectionGroup(state.author, state.authorName, downloadedStories);
-          if (fmtHTML) {
+      if (exportMode === 'combined') {
+        const collectionGroup = buildSelectedCollectionGroup(state.author, state.authorName, downloadedStories);
+        if (fmtHTML) {
+          ensureDownloadNotAborted();
+          const html = collectionGroup.stories.length === 1
+            ? HTMLBuilder.buildStoryHTML(collectionGroup.stories[0])
+            : HTMLBuilder.buildCombinedHTML(collectionGroup);
+          const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+          saveAs(blob, HTMLBuilder.groupFilename(collectionGroup) + '.html');
+          await sleep(100);
+        }
+        if (fmtEPUB) {
+          ensureDownloadNotAborted();
+          UI.updateProgress(0, 1, 'Generating EPUB: ' + collectionGroup.title);
+          Logger.info('Building EPUB: ' + collectionGroup.title);
+          try {
+            const blob = collectionGroup.stories.length === 1
+              ? await EPUBBuilder.buildEPUB(collectionGroup.stories[0])
+              : await EPUBBuilder.buildCombinedEPUB(collectionGroup);
             ensureDownloadNotAborted();
-            const html = collectionGroup.stories.length === 1
-              ? HTMLBuilder.buildStoryHTML(collectionGroup.stories[0])
-              : HTMLBuilder.buildCombinedHTML(collectionGroup);
+            saveAs(blob, HTMLBuilder.groupFilename(collectionGroup) + '.epub');
+          } catch (err) {
+            if (isAbortError(err)) throw err;
+            Logger.error('EPUB failed for ' + collectionGroup.title + ': ' + err.message);
+            errors.push({ story: collectionGroup.title, error: err.message });
+          }
+          await sleep(150);
+        }
+        if (fmtTXT) {
+          ensureDownloadNotAborted();
+          const text = collectionGroup.stories.length === 1
+            ? TextBuilder.buildStoryText(collectionGroup.stories[0])
+            : TextBuilder.buildCombinedText(collectionGroup);
+          const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+          saveAs(blob, HTMLBuilder.groupFilename(collectionGroup) + '.txt');
+          await sleep(100);
+        }
+      } else {
+        if (fmtHTML) {
+          for (const story of downloadedStories) {
+            ensureDownloadNotAborted();
+            const html = HTMLBuilder.buildStoryHTML(story);
             const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-            saveAs(blob, HTMLBuilder.groupFilename(collectionGroup) + '.html');
+            saveAs(blob, HTMLBuilder.storyFilename(story) + '.html');
             await sleep(100);
           }
-          if (fmtEPUB) {
+        }
+        if (fmtEPUB) {
+          for (let i = 0; i < downloadedStories.length; i++) {
             ensureDownloadNotAborted();
-            UI.updateProgress(0, 1, 'Generating EPUB: ' + collectionGroup.title);
-            Logger.info('Building EPUB: ' + collectionGroup.title);
+            const story = downloadedStories[i];
+            UI.updateProgress(i, downloadedStories.length, 'Generating EPUB: ' + story.title);
+            Logger.info('Building EPUB: ' + story.title);
             try {
-              const blob = collectionGroup.stories.length === 1
-                ? await EPUBBuilder.buildEPUB(collectionGroup.stories[0])
-                : await EPUBBuilder.buildCombinedEPUB(collectionGroup);
+              const blob = await EPUBBuilder.buildEPUB(story);
               ensureDownloadNotAborted();
-              saveAs(blob, HTMLBuilder.groupFilename(collectionGroup) + '.epub');
+              saveAs(blob, HTMLBuilder.storyFilename(story) + '.epub');
             } catch (err) {
               if (isAbortError(err)) throw err;
-              Logger.error('EPUB failed for ' + collectionGroup.title + ': ' + err.message);
+              Logger.error('EPUB failed for ' + story.title + ': ' + err.message);
+              errors.push({ story: story.title, error: err.message });
             }
             await sleep(150);
           }
-          if (fmtTXT) {
+        }
+        if (fmtTXT) {
+          for (const story of downloadedStories) {
             ensureDownloadNotAborted();
-            const text = collectionGroup.stories.length === 1
-              ? TextBuilder.buildStoryText(collectionGroup.stories[0])
-              : TextBuilder.buildCombinedText(collectionGroup);
+            const text = TextBuilder.buildStoryText(story);
             const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-            saveAs(blob, HTMLBuilder.groupFilename(collectionGroup) + '.txt');
+            saveAs(blob, HTMLBuilder.storyFilename(story) + '.txt');
             await sleep(100);
           }
-        } else {
-          if (fmtHTML) {
-            for (const story of downloadedStories) {
-              ensureDownloadNotAborted();
-              const html = HTMLBuilder.buildStoryHTML(story);
-              const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-              saveAs(blob, HTMLBuilder.storyFilename(story) + '.html');
-              await sleep(100);
-            }
-          }
-          if (fmtEPUB) {
-            for (let i = 0; i < downloadedStories.length; i++) {
-              ensureDownloadNotAborted();
-              const story = downloadedStories[i];
-              UI.updateProgress(i, downloadedStories.length, 'Generating EPUB: ' + story.title);
-              Logger.info('Building EPUB: ' + story.title);
-              try {
-                const blob = await EPUBBuilder.buildEPUB(story);
-                ensureDownloadNotAborted();
-                saveAs(blob, HTMLBuilder.storyFilename(story) + '.epub');
-              } catch (err) {
-                if (isAbortError(err)) throw err;
-                Logger.error('EPUB failed for ' + story.title + ': ' + err.message);
-              }
-              await sleep(150);
-            }
-          }
-          if (fmtTXT) {
-            for (const story of downloadedStories) {
-              ensureDownloadNotAborted();
-              const text = TextBuilder.buildStoryText(story);
-              const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-              saveAs(blob, HTMLBuilder.storyFilename(story) + '.txt');
-              await sleep(100);
-            }
-          }
-        }
-      } else {
-        ensureDownloadNotAborted();
-        UI.updateProgress(downloadedStories.length, downloadedStories.length, 'Building ZIP package...');
-        Logger.info('Building ZIP package...');
-
-        try {
-          const zipBlob = await ZIPBuilder.buildCollection(
-            state.author,
-            state.authorName,
-            downloadedStories,
-            selectedFormats,
-            exportMode,
-            (current, total, label) => {
-              UI.updateProgress(current, total, 'Packaging: ' + label);
-            },
-            errors,
-            isDownloadAbortRequested
-          );
-
-          ensureDownloadNotAborted();
-          const authorSafe = HTMLBuilder.sanitizeFilename(state.authorName || state.author || 'author');
-          const filename = authorSafe + '_literotica_collection.zip';
-          saveAs(zipBlob, filename);
-          Logger.success('✓ ZIP saved: ' + filename + ' (' + downloadedStories.length + ' stories)');
-        } catch (err) {
-          if (isAbortError(err)) throw err;
-          Logger.error('ZIP generation failed: ' + err.message);
         }
       }
 
