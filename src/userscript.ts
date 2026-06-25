@@ -1,7 +1,7 @@
 export const USERSCRIPT = `// ==UserScript==
 // @name         Literotica Downloader
 // @namespace    https://studios.easyspace.in
-// @version      2.1.10
+// @version      2.1.14
 // @description  Download complete author libraries from Literotica using the site HTML. Supports HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
 // @author       easyspace
 // @license      All Rights Reserved
@@ -46,7 +46,7 @@ export const USERSCRIPT = `// ==UserScript==
   // ============================================================
 
   const API_BASE = 'https://www.literotica.com/api/3';
-  const SCRIPT_VERSION = '2.1.10';
+  const SCRIPT_VERSION = '2.1.14';
   const REQUEST_DELAY_MIN = 300;
   const REQUEST_DELAY_MAX = 500;
   const MAX_RETRIES = 3;
@@ -116,6 +116,11 @@ export const USERSCRIPT = `// ==UserScript==
   function randomDelay() {
     const ms = REQUEST_DELAY_MIN + Math.random() * (REQUEST_DELAY_MAX - REQUEST_DELAY_MIN);
     return sleep(ms);
+  }
+
+  function createBinaryBlob(data, mimeType) {
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    return new Blob([bytes], { type: mimeType });
   }
 
   async function gmFetch(url, options = {}) {
@@ -506,6 +511,451 @@ export const USERSCRIPT = `// ==UserScript==
     return text.trim();
   }
 
+  const StoryMarkup = (() => {
+    const BLOCK_TAGS = new Set(['article', 'aside', 'blockquote', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'footer', 'hr', 'li', 'main', 'nav', 'ol', 'p', 'pre', 'section', 'table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th', 'ul']);
+    const ALLOWED_TAGS = new Set(['a', 'article', 'blockquote', 'br', 'code', 'div', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'li', 'ol', 'p', 'pre', 'span', 'strong', 'sub', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'tfoot', 'tr', 'u', 'ul']);
+    const PREFERRED_CONTENT_SELECTORS = [
+      '[itemprop="articleBody"] [class*="introduction__text"]',
+      '[itemprop="articleBody"] [class*="introduction-wrap"]',
+      '[itemprop="articleBody"] [class*="introduction"]',
+      '[itemprop="articleBody"]',
+      '[class*="article__content"] [class*="introduction__text"]',
+      '[class*="article__content"] [class*="introduction-wrap"]',
+      '[class*="article__content"]',
+      '.story-content',
+      '[class*="story-content"]',
+      '.aa_ht',
+      '[class*="aa_ht"]',
+      '[class*="story_body"]',
+      '[class*="story-body"]',
+      '[class*="article-content"]',
+      '[class*="article-body"]',
+    ];
+    const CONTENT_SELECTORS = [
+      '[itemprop="articleBody"] [class*="introduction__text"]',
+      '[itemprop="articleBody"] [class*="introduction-wrap"]',
+      '[itemprop="articleBody"] [class*="introduction"]',
+      '[itemprop="articleBody"]',
+      '[class*="article__content"] [class*="introduction__text"]',
+      '[class*="article__content"] [class*="introduction-wrap"]',
+      '[class*="article__content"]',
+      '.aa_ht',
+      '[class*="aa_ht"]',
+      '[data-testid*="story"]',
+      '[data-test*="story"]',
+      '[class*="story-content"]',
+      '[class*="story_body"]',
+      '[class*="story-body"]',
+      '[class*="article-content"]',
+      '[class*="article-body"]',
+      '[class*="tabpanel"]',
+      'article',
+      'main',
+    ];
+    const NOISE_CLASS_PATTERN = /(ad-|ads|banner|bookmark|comment|cta|favorite|footer|header|nav|pager|pagination|promo|rating|report|share|social|toolbar)/i;
+    const SAFE_URI_PATTERN = /^(https?:|mailto:|\\/|#)/i;
+
+    function escapeText(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function escapeAttr(value) {
+      return escapeText(value)
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function normalizeSourceText(value) {
+      return String(value || '')
+        .replace(/\\r\\n/g, '\\n')
+        .replace(/\\r/g, '\\n')
+        .replace(/\\u00a0/g, ' ');
+    }
+
+    function isLikelyMarkup(value) {
+      return /<\\s*(a|article|blockquote|br|div|em|h[1-6]|hr|i|li|ol|p|pre|section|span|strong|table|tbody|td|th|thead|tfoot|tr|u|ul)\\b/i.test(String(value || ''));
+    }
+
+    function stripNoiseLines(value) {
+      return normalizeSourceText(value)
+        .split('\\n')
+        .filter(line => !/^\\s*(bookmark|report|share|favorite|follow)\\s+story\\s*$/i.test(line))
+        .join('\\n')
+        .trim();
+    }
+
+    function plainTextToHtml(text) {
+      const cleaned = stripNoiseLines(text);
+      if (!cleaned) return '';
+
+      return cleaned
+        .split(/\\n{2,}/)
+        .map(block => block.trim())
+        .filter(Boolean)
+        .map(block => '<p>' + escapeText(block).replace(/\\n/g, '<br>') + '</p>')
+        .join('');
+    }
+
+    function isNoiseElement(node) {
+      if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+      const tag = node.tagName.toLowerCase();
+      if (['script', 'style', 'noscript', 'iframe', 'button', 'form', 'svg', 'canvas'].includes(tag)) return true;
+      const marker = [node.id || '', node.className || '', node.getAttribute('role') || '', node.getAttribute('aria-label') || ''].join(' ');
+      return NOISE_CLASS_PATTERN.test(marker);
+    }
+
+    function normalizeAnchorHref(href) {
+      const value = String(href || '').trim();
+      if (!value || !SAFE_URI_PATTERN.test(value) || /^javascript:/i.test(value)) return '';
+      if (value.startsWith('/')) {
+        try {
+          return new URL(value, window.location.origin).toString();
+        } catch {
+          return value;
+        }
+      }
+      return value;
+    }
+
+    function sanitizeNode(node, doc) {
+      if (!node) return null;
+
+      if (node.nodeType === Node.TEXT_NODE) {
+        const value = normalizeSourceText(node.nodeValue || '');
+        if (!value.trim()) return doc.createTextNode(value);
+        if (/^\\s*(bookmark|report|share|favorite|follow)\\s+story\\s*$/i.test(value)) return null;
+        return doc.createTextNode(value);
+      }
+
+      if (node.nodeType !== Node.ELEMENT_NODE) return null;
+      if (isNoiseElement(node)) return null;
+
+      const tag = node.tagName.toLowerCase();
+      const mappedTag = tag === 'b' ? 'strong' : tag === 'i' ? 'em' : tag === 'section' ? 'div' : tag;
+      const shouldKeepTag = ALLOWED_TAGS.has(mappedTag);
+      const target = shouldKeepTag ? doc.createElement(mappedTag) : doc.createDocumentFragment();
+
+      if (mappedTag === 'a' && shouldKeepTag) {
+        const href = normalizeAnchorHref(node.getAttribute('href') || '');
+        if (href) {
+          target.setAttribute('href', href);
+          target.setAttribute('rel', 'noopener noreferrer');
+        }
+      }
+
+      Array.from(node.childNodes).forEach(child => {
+        const sanitizedChild = sanitizeNode(child, doc);
+        if (sanitizedChild) target.appendChild(sanitizedChild);
+      });
+
+      if (shouldKeepTag && BLOCK_TAGS.has(mappedTag) && !target.textContent.trim() && !target.querySelector('br, hr')) {
+        return null;
+      }
+
+      if (!shouldKeepTag && target.childNodes.length === 0) {
+        return null;
+      }
+
+      return target;
+    }
+
+    function sanitizeFragmentFromNode(root) {
+      if (!root) return '';
+      const doc = root.ownerDocument || document;
+      const wrapper = doc.createElement('div');
+
+      Array.from(root.childNodes).forEach(child => {
+        const sanitized = sanitizeNode(child, doc);
+        if (sanitized) wrapper.appendChild(sanitized);
+      });
+
+      return wrapper.innerHTML.trim();
+    }
+
+    function normalizeComparableText(value) {
+      return stripNoiseLines(String(value || ''))
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+    }
+
+    function buildReferenceExcerpt(value) {
+      const normalized = normalizeComparableText(String(value || '').replace(/<[^>]+>/g, ' '));
+      if (!normalized) return '';
+      const sentenceMatch = normalized.match(/(.{40,180}?[.!?])(?:\s|$)/);
+      if (sentenceMatch && sentenceMatch[1]) return sentenceMatch[1].trim();
+      return normalized.slice(0, 160).trim();
+    }
+
+    function elementDepth(element) {
+      let depth = 0;
+      let node = element;
+      while (node && node.parentElement) {
+        depth++;
+        node = node.parentElement;
+      }
+      return depth;
+    }
+
+    function countStructuralBlocks(markup) {
+      if (!markup) return 0;
+      return (markup.match(/<(p|div|li|blockquote|pre|h[1-6])\b/gi) || []).length
+        + (markup.match(/<br\b/gi) || []).length;
+    }
+
+    function candidateScore(element, referenceExcerpt = '') {
+      if (!element || element.nodeType !== Node.ELEMENT_NODE || isNoiseElement(element)) return -1;
+      const text = stripNoiseLines(element.textContent || '');
+      if (text.length < 120) return -1;
+
+      const paragraphCount = element.querySelectorAll('p').length;
+      const divCount = element.querySelectorAll('div').length;
+      const breakCount = element.querySelectorAll('br').length;
+      const listItemCount = element.querySelectorAll('li').length;
+      const blockquoteCount = element.querySelectorAll('blockquote, pre').length;
+      const linkCount = element.querySelectorAll('a').length;
+      const buttonCount = element.querySelectorAll('button, [role="button"]').length;
+      const headingCount = element.querySelectorAll('h1, h2, h3, h4, h5, h6').length;
+      const structuralCount = paragraphCount + Math.min(divCount, 20) + listItemCount + blockquoteCount + breakCount + headingCount;
+      const marker = [element.id || '', element.className || '', element.getAttribute('role') || '', element.getAttribute('aria-label') || ''].join(' ');
+      const preferredContainer = /(story-content|aa_ht|story[_-]body|article[_-]content|article[_-]body|article__content|introduction[_-]|introduction__)/i.test(marker);
+      const tabPanelPenalty = /(tabpanel|tab-panel|tabs?)/i.test(marker) ? 3000 : 0;
+      const referenceMatch = referenceExcerpt && normalizeComparableText(text).includes(referenceExcerpt);
+      const referenceBonus = referenceMatch ? 20000 : 0;
+      const sizePenalty = referenceMatch ? Math.max(0, Math.floor(text.length / 12)) : 0;
+
+      if (structuralCount === 0 && text.length > 300) {
+        return Math.max(1, Math.floor(text.length / 20))
+          - linkCount * 20
+          - buttonCount * 250
+          - tabPanelPenalty
+          - sizePenalty
+          + (preferredContainer ? 3000 : 0)
+          + referenceBonus;
+      }
+
+      return text.length
+        + paragraphCount * 500
+        + Math.min(divCount, 20) * 80
+        + listItemCount * 140
+        + blockquoteCount * 180
+        + breakCount * 70
+        + headingCount * 120
+        - linkCount * 40
+        - buttonCount * 250
+        - tabPanelPenalty
+        - sizePenalty
+        + (preferredContainer ? 3000 : 0)
+        + referenceBonus;
+    }
+
+    function findRenderedContentRoot(doc, referenceText = '') {
+      if (!doc || !doc.body) return null;
+      const referenceExcerpt = buildReferenceExcerpt(referenceText);
+
+      const preferredSeen = new Set();
+      const preferredCandidates = [];
+      PREFERRED_CONTENT_SELECTORS.forEach((selector, index) => {
+        doc.querySelectorAll(selector).forEach(node => {
+          if (!preferredSeen.has(node)) {
+            preferredSeen.add(node);
+            preferredCandidates.push({ node, priority: PREFERRED_CONTENT_SELECTORS.length - index });
+          }
+        });
+      });
+
+      if (referenceExcerpt) {
+        const anchoredPreferred = preferredCandidates
+          .filter(entry => normalizeComparableText(entry.node.textContent || '').includes(referenceExcerpt))
+          .sort((a, b) => {
+            if (b.priority !== a.priority) return b.priority - a.priority;
+            const aText = normalizeComparableText(a.node.textContent || '');
+            const bText = normalizeComparableText(b.node.textContent || '');
+            if (aText.length !== bText.length) return aText.length - bText.length;
+            return elementDepth(b.node) - elementDepth(a.node);
+          })[0];
+        if (anchoredPreferred) {
+          return anchoredPreferred.node;
+        }
+      }
+
+      const bestPreferredMatch = preferredCandidates
+        .map(entry => ({ node: entry.node, score: candidateScore(entry.node, referenceExcerpt) + entry.priority * 2000 }))
+        .sort((a, b) => b.score - a.score)[0];
+
+      if (bestPreferredMatch && bestPreferredMatch.score > 0) {
+        return bestPreferredMatch.node;
+      }
+
+      const seen = new Set();
+      const selectorCandidates = [];
+      CONTENT_SELECTORS.forEach((selector, index) => {
+        doc.querySelectorAll(selector).forEach(node => {
+          if (!seen.has(node)) {
+            seen.add(node);
+            selectorCandidates.push({ node, priority: CONTENT_SELECTORS.length - index });
+          }
+        });
+      });
+
+      const bestSelectorMatch = selectorCandidates
+        .map(entry => ({ node: entry.node, score: candidateScore(entry.node, referenceExcerpt) + entry.priority * 1000 }))
+        .sort((a, b) => b.score - a.score)[0];
+
+      if (bestSelectorMatch && bestSelectorMatch.score > 0) {
+        return bestSelectorMatch.node;
+      }
+
+      const genericCandidates = Array.from(doc.body.querySelectorAll('article, main, section, div'))
+        .map(node => ({ node, score: candidateScore(node, referenceExcerpt) }))
+        .filter(entry => entry.score > 0)
+        .sort((a, b) => b.score - a.score);
+
+      return genericCandidates.length ? genericCandidates[0].node : null;
+    }
+
+    function sanitizeStorySource(markup) {
+      if (!markup) return '';
+      const doc = document.implementation.createHTMLDocument('story-fragment');
+      const wrapper = doc.createElement('div');
+      wrapper.innerHTML = isLikelyMarkup(markup) ? String(markup) : plainTextToHtml(markup);
+      return sanitizeFragmentFromNode(wrapper);
+    }
+
+    function scoreMarkup(markup) {
+      if (!markup) return -1;
+      const text = stripNoiseLines(String(markup).replace(/<[^>]+>/g, ' '));
+      if (text.length < 80) return text.length;
+
+      const paragraphCount = (markup.match(/<p\b/gi) || []).length;
+      const divCount = (markup.match(/<div\b/gi) || []).length;
+      const breakCount = (markup.match(/<br\b/gi) || []).length;
+      const listItemCount = (markup.match(/<li\b/gi) || []).length;
+      const blockquoteCount = (markup.match(/<(blockquote|pre)\b/gi) || []).length;
+      const headingCount = (markup.match(/<h[1-6]\b/gi) || []).length;
+      const escapedTagCount = (markup.match(/\\x3C|&lt;(em|i|strong|b|p|div|br)/gi) || []).length;
+      const linkCount = (markup.match(/<a\b/gi) || []).length;
+
+      return text.length
+        + paragraphCount * 500
+        + Math.min(divCount, 20) * 80
+        + listItemCount * 140
+        + blockquoteCount * 180
+        + breakCount * 70
+        + headingCount * 120
+        - escapedTagCount * 1200
+        - linkCount * 30;
+    }
+
+    function choosePreferredMarkup(renderedMarkup, fallbackMarkup) {
+      const rendered = sanitizeStorySource(renderedMarkup);
+      const fallback = sanitizeStorySource(fallbackMarkup);
+      const renderedScore = scoreMarkup(rendered);
+      const fallbackScore = scoreMarkup(fallback);
+      const renderedBlocks = countStructuralBlocks(rendered);
+      const fallbackBlocks = countStructuralBlocks(fallback);
+
+      if (fallbackBlocks >= 2 && renderedBlocks <= 1 && fallbackScore > 0) {
+        return { html: fallback, source: 'embedded-pageText', renderedScore, fallbackScore };
+      }
+
+      if (fallbackScore > renderedScore + 400) {
+        return { html: fallback, source: 'embedded-pageText', renderedScore, fallbackScore };
+      }
+      if (renderedScore > 0) {
+        return { html: rendered, source: 'rendered-dom', renderedScore, fallbackScore };
+      }
+      if (fallbackScore > 0) {
+        return { html: fallback, source: 'embedded-pageText', renderedScore, fallbackScore };
+      }
+      return { html: '', source: 'missing', renderedScore, fallbackScore };
+    }
+
+    function sanitizeStoredMarkup(markup) {
+      const sanitized = sanitizeStorySource(markup);
+      return sanitized || '<p><em>[No content]</em></p>';
+    }
+
+    function extractStoryHtmlFromDocument(doc, referenceText = '') {
+      const root = findRenderedContentRoot(doc, referenceText);
+      if (!root) return '';
+      return sanitizeFragmentFromNode(root);
+    }
+
+    function serializeNodeToXHTML(node) {
+      if (!node) return '';
+      if (node.nodeType === Node.TEXT_NODE) {
+        return escapeText(node.nodeValue || '');
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return '';
+
+      const tag = node.tagName.toLowerCase();
+      const mappedTag = tag === 'b' ? 'strong' : tag === 'i' ? 'em' : tag;
+      const finalTag = ALLOWED_TAGS.has(mappedTag) ? mappedTag : null;
+      const children = Array.from(node.childNodes).map(serializeNodeToXHTML).join('');
+
+      if (!finalTag) return children;
+
+      if (finalTag === 'br' || finalTag === 'hr') {
+        return '<' + finalTag + ' />';
+      }
+
+      const attrs = [];
+      if (finalTag === 'a') {
+        const href = normalizeAnchorHref(node.getAttribute('href') || '');
+        if (href) attrs.push(' href="' + escapeAttr(href) + '"');
+      }
+
+      return '<' + finalTag + attrs.join('') + '>' + children + '</' + finalTag + '>';
+    }
+
+    function toXHTMLFragment(markup) {
+      const sanitized = sanitizeStoredMarkup(markup);
+      const doc = document.implementation.createHTMLDocument('story-xhtml');
+      const wrapper = doc.createElement('div');
+      wrapper.innerHTML = sanitized;
+      const xhtml = Array.from(wrapper.childNodes).map(serializeNodeToXHTML).join('').trim();
+      return xhtml || '<p><em>[No content available]</em></p>';
+    }
+
+    function validateXMLDocument(markup, mimeType, label) {
+      const parsed = new DOMParser().parseFromString(markup, mimeType);
+      if (parsed.querySelector('parsererror')) {
+        throw new Error('Invalid ' + label + ' generated for EPUB.');
+      }
+    }
+
+    return {
+      extractStoryHtmlFromDocument,
+      choosePreferredMarkup,
+      sanitizeStorySource,
+      sanitizeStoredMarkup,
+      scoreMarkup,
+      toXHTMLFragment,
+      plainTextToHtml,
+      validateXMLDocument,
+    };
+  })();
+
+  function extractPageCountFromText(text) {
+    const value = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!value) return 0;
+
+    const compactMatch = value.match(/\\b(\\d+)\\s*p\\b/i);
+    if (compactMatch) return Math.max(1, parseInt(compactMatch[1], 10) || 0);
+
+    const compactSuffixMatch = value.match(/\\b(\\d+)p\\b/i);
+    if (compactSuffixMatch) return Math.max(1, parseInt(compactSuffixMatch[1], 10) || 0);
+
+    const verboseMatch = value.match(/\\b(\\d+)\\s*pages?\\b/i);
+    if (verboseMatch) return Math.max(1, parseInt(verboseMatch[1], 10) || 0);
+
+    return 0;
+  }
+
   function escapeRegex(str) {
     return String(str || '').replace(new RegExp('[-/\\\\^$*+?.()|[\\]{}]', 'g'), '\\$&');
   }
@@ -656,6 +1106,9 @@ export const USERSCRIPT = `// ==UserScript==
 
   function buildCatalogItem(overrides = {}) {
     const dateValue = overrides.date || '';
+    const parsedPageCount = overrides.pageCount === undefined || overrides.pageCount === null || overrides.pageCount === ''
+      ? 0
+      : Math.max(0, parseInt(overrides.pageCount, 10) || 0);
     return {
       id: overrides.id || overrides.slug || overrides.url || '',
       slug: overrides.slug || overrides.url || overrides.id || '',
@@ -669,7 +1122,7 @@ export const USERSCRIPT = `// ==UserScript==
       views: parseInt(overrides.views || 0, 10) || 0,
       date: dateValue,
       dateFormatted: overrides.dateFormatted || formatDateDisplay(dateValue),
-      pageCount: parseInt(overrides.pageCount || 1, 10) || 1,
+      pageCount: parsedPageCount,
       seriesId: overrides.seriesId || null,
       seriesTitle: overrides.seriesTitle || null,
       seriesIndex: parseInt(overrides.seriesIndex || 0, 10) || 0,
@@ -710,6 +1163,7 @@ export const USERSCRIPT = `// ==UserScript==
       const text = card.textContent || '';
       const dateMatch = text.match(/\\b\\d{1,2}\\/\\d{1,2}\\/\\d{4}\\b/);
       const ratingMatch = text.match(/\\b([0-4]\\.\\d{1,2}|5(?:\\.0{1,2})?)\\b/);
+      const pageCount = extractPageCountFromText(text);
 
       items.push(buildCatalogItem({
         id: slug,
@@ -724,7 +1178,7 @@ export const USERSCRIPT = `// ==UserScript==
         views: 0,
         date: dateMatch ? dateMatch[0] : '',
         dateFormatted: dateMatch ? dateMatch[0] : '',
-        pageCount: 1,
+        pageCount,
         seriesId: null,
         seriesTitle: null,
         seriesIndex: 0,
@@ -866,6 +1320,7 @@ export const USERSCRIPT = `// ==UserScript==
       const viewsMatch = snippet.match(/view_count:(\d+)/);
       const commentsMatch = snippet.match(/comment_count:(\d+)/);
       const wordsMatch = snippet.match(/words_count:(\d+)/);
+      const pageCountMatch = snippet.match(/["']?(?:meta_pages|page_count|pages)["']?\\s*:\\s*(\\d+)/);
 
       const categorySlug = categorySlugMatch ? decodeSerializedField(categorySlugMatch[1]).trim() : '';
       itemsBySlug.set(slug, buildCatalogItem({
@@ -881,7 +1336,7 @@ export const USERSCRIPT = `// ==UserScript==
         views: viewsMatch ? parseInt(viewsMatch[1], 10) : 0,
         date: dateMatch ? decodeSerializedField(dateMatch[1]).trim() : '',
         dateFormatted: dateMatch ? decodeSerializedField(dateMatch[1]).trim() : '',
-        pageCount: 1,
+        pageCount: pageCountMatch ? parseInt(pageCountMatch[1], 10) : 0,
         seriesId: null,
         seriesTitle: null,
         seriesIndex: 0,
@@ -927,7 +1382,7 @@ export const USERSCRIPT = `// ==UserScript==
           views: normalized.views || current.views,
           date: normalized.date || current.date,
           dateFormatted: normalized.dateFormatted || current.dateFormatted,
-          pageCount: normalized.pageCount || current.pageCount,
+          pageCount: Math.max(normalized.pageCount || 0, current.pageCount || 0),
           seriesId: normalized.seriesId || current.seriesId,
           seriesTitle: normalized.seriesTitle || current.seriesTitle,
           seriesIndex: normalized.seriesIndex || current.seriesIndex,
@@ -1025,6 +1480,7 @@ export const USERSCRIPT = `// ==UserScript==
       const cardText = card?.textContent || '';
       const dateMatch = cardText.match(/\\b\\d{1,2}\\/\\d{1,2}\\/\\d{4}\\b/);
       const ratingMatch = cardText.match(/\\b([0-4]\\.\\d{1,2}|5(?:\\.0{1,2})?)\\b/);
+      const pageCount = extractPageCountFromText(cardText);
 
       items.push(buildCatalogItem({
         id: slug,
@@ -1037,7 +1493,7 @@ export const USERSCRIPT = `// ==UserScript==
         rating: ratingMatch ? parseFloat(ratingMatch[1]) : 0,
         date: dateMatch ? dateMatch[0] : '',
         dateFormatted: dateMatch ? dateMatch[0] : '',
-        pageCount: 1,
+        pageCount,
         seriesId: seriesRef.id,
         seriesTitle,
         seriesIndex: index + 1,
@@ -1077,12 +1533,15 @@ export const USERSCRIPT = `// ==UserScript==
 
     let mergedItems = parsed.items.slice();
     let embeddedCount = visibleCount;
-    if (worksPageTotal > 0 && visibleCount < worksPageTotal) {
+    const shouldInspectEmbedded = worksPageTotal > 0 && visibleCount < worksPageTotal;
+    if (shouldInspectEmbedded) {
       Logger.warn('Visible listing is short of the works-page total. Inspecting embedded list data...');
-      const embeddedParsed = extractCatalogFromEmbeddedData(html, author, parsed.authorName);
-      embeddedCount = embeddedParsed.items.length;
+    }
+    const embeddedParsed = extractCatalogFromEmbeddedData(html, author, parsed.authorName);
+    embeddedCount = embeddedParsed.items.length;
+    if (embeddedCount > 0) {
       Logger.info('Embedded list data yielded ' + embeddedCount + ' unique stories.');
-      if (embeddedCount === worksPageTotal) {
+      if (worksPageTotal > 0 && embeddedCount === worksPageTotal) {
         Logger.info('Embedded list data already matches the works-page total. Using it as the authoritative base list.');
         mergedItems = embeddedParsed.items.slice();
       } else {
@@ -1175,7 +1634,9 @@ export const USERSCRIPT = `// ==UserScript==
       views: parseInt(raw.view_count || raw.views || raw.totalPageViews || 0, 10),
       date: raw.date_approve || raw.publishDate || raw.date || '',
       dateFormatted: formatDateDisplay(raw.date_approve || raw.publishDate || raw.date || ''),
-      pageCount: parseInt(raw.meta_pages || raw.pages || raw.page_count || 1, 10),
+      pageCount: raw.meta_pages !== undefined || raw.pages !== undefined || raw.page_count !== undefined
+        ? Math.max(0, parseInt(raw.meta_pages || raw.pages || raw.page_count, 10) || 0)
+        : 0,
       seriesId: raw.series?.id || raw.seriesId || null,
       seriesTitle: raw.series?.title || raw.seriesTitle || null,
       seriesIndex: parseInt(raw.series_number || raw.chapterIndex || raw.series_index || 0, 10),
@@ -1279,15 +1740,15 @@ export const USERSCRIPT = `// ==UserScript==
     function decodeEmbeddedString(value) {
       if (!value) return '';
       try {
-        return normalizeStoryMarkup(decodeEscapedSequences(JSON.parse('"' + value + '"')));
+        return decodeEscapedSequences(JSON.parse('"' + value + '"'));
       } catch {
         const slash = String.fromCharCode(92);
         const newline = String.fromCharCode(10);
-        return normalizeStoryMarkup(decodeEscapedSequences(value
+        return decodeEscapedSequences(value
           .split(slash + 'r' + slash + 'n').join(newline)
           .split(slash + 'n').join(newline)
           .split(slash + '"').join('"')
-          .split(slash + slash).join(slash)));
+          .split(slash + slash).join(slash));
       }
     }
 
@@ -1326,11 +1787,17 @@ export const USERSCRIPT = `// ==UserScript==
         .filter(Boolean);
 
       const detectedTotalPages = pageLinks.length ? Math.max(pageNum, ...pageLinks) : 1;
+      const decodedPageText = pageTextValue ? decodeEmbeddedString(pageTextValue) : '';
+      const renderedHtml = StoryMarkup.extractStoryHtmlFromDocument(doc, decodedPageText);
+      const preferredMarkup = StoryMarkup.choosePreferredMarkup(renderedHtml, decodedPageText);
 
       return {
-        text: pageTextValue ? decodeEmbeddedString(pageTextValue) : '',
+        html: preferredMarkup.html,
         title,
         totalPages: detectedTotalPages,
+        source: preferredMarkup.source,
+        renderedScore: preferredMarkup.renderedScore,
+        fallbackScore: preferredMarkup.fallbackScore,
       };
     }
 
@@ -1359,8 +1826,11 @@ export const USERSCRIPT = `// ==UserScript==
         const html = await response.text();
         throwIfAborted(signal);
         const payload = extractPagePayload(html, pageNum);
-        if (!payload.text) {
-          throw new Error('No pageText found in story HTML: ' + url);
+        if (!payload.html) {
+          throw new Error('No story content found in story HTML: ' + url);
+        }
+        if (payload.source !== 'rendered-dom') {
+          Logger.warn('Falling back to embedded story markup for ' + story.title + ' page ' + pageNum + ' (rendered score ' + payload.renderedScore + ', fallback score ' + payload.fallbackScore + ').');
         }
 
         if (pageNum === 1) {
@@ -1370,8 +1840,9 @@ export const USERSCRIPT = `// ==UserScript==
         successfulPages++;
         pages.push({
           pageNum,
-          text: payload.text,
+          text: payload.html,
           title: cleanStoryTitle(payload.title || (totalPages > 1 ? 'Page ' + pageNum : story.title)),
+          source: payload.source,
         });
       } catch (err) {
         if (isAbortError(err)) throw err;
@@ -1379,7 +1850,7 @@ export const USERSCRIPT = `// ==UserScript==
         if (pageNum === 1) {
           throw err;
         }
-        pages.push({ pageNum, text: '[Error fetching this page: ' + err.message + ']', title: 'Page ' + pageNum });
+        pages.push({ pageNum, text: '<p><em>[Error fetching this page: ' + HTMLBuilder.escapeHtml(err.message) + ']</em></p>', title: 'Page ' + pageNum });
       }
     }
 
@@ -1538,15 +2009,7 @@ export const USERSCRIPT = `// ==UserScript==
     }
 
     function processPageText(text) {
-      if (!text) return '<p><em>[No content]</em></p>';
-      // The API returns HTML content in pageText
-      // Sanitize but preserve paragraph structure
-      return text
-        .replace(/<script[\\s\\S]*?<\\/script>/gi, '')
-        .replace(/<style[\\s\\S]*?<\\/style>/gi, '')
-        .replace(/on\\w+="[^"]*"/gi, '')
-        .replace(/on\\w+='[^']*'/gi, '')
-        || '<p>' + escapeHtml(text) + '</p>';
+      return StoryMarkup.sanitizeStoredMarkup(text);
     }
 
     function storyFilename(storyData) {
@@ -1565,47 +2028,69 @@ export const USERSCRIPT = `// ==UserScript==
     function readingCSS() {
       return \`
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+          color-scheme: light;
+          --reader-bg: #f4efe7;
+          --reader-paper: #fffdf8;
+          --reader-ink: #1b1712;
+          --reader-muted: #6d6254;
+          --reader-accent: #8b1538;
+          --reader-rule: #ddd2c2;
+        }
         body {
           font-family: Georgia, 'Times New Roman', serif;
-          font-size: 1.1rem;
-          line-height: 1.8;
-          color: #1a1a1a;
-          background: #fafaf8;
-          max-width: 760px;
+          font-size: 1.05rem;
+          line-height: 1.82;
+          color: var(--reader-ink);
+          background: var(--reader-bg);
+          margin: 0;
+          padding: 0;
+          -webkit-text-size-adjust: 100%;
+        }
+        .reader-shell {
+          width: 100%;
+          max-width: 44rem;
           margin: 0 auto;
-          padding: 2rem 1.5rem 4rem;
+          min-height: 100vh;
+          padding: 1rem 0.9rem 2.5rem;
+        }
+        .reader-paper {
+          background: var(--reader-paper);
+          border-radius: 18px;
+          padding: 1.2rem 1rem 1.6rem;
+          box-shadow: 0 12px 32px rgba(42, 30, 12, 0.08);
         }
         .story-section + .story-section,
         .story-separator {
-          margin-top: 3rem;
+          margin-top: 2.25rem;
         }
         .story-separator {
-          border-top: 2px solid #ddd7cf;
-          padding-top: 2rem;
+          border-top: 1px solid var(--reader-rule);
+          padding-top: 1.5rem;
         }
         .story-kicker {
           font-family: system-ui, sans-serif;
-          font-size: 0.8rem;
+          font-size: 0.74rem;
           letter-spacing: 0.08em;
           text-transform: uppercase;
-          color: #6c6257;
-          margin-bottom: 0.75rem;
+          color: var(--reader-muted);
+          margin-bottom: 0.65rem;
         }
         .story-title {
-          font-size: 1.9rem;
+          font-size: clamp(1.55rem, 5vw, 2rem);
           line-height: 1.3;
-          color: #121212;
-          margin-bottom: 1.5rem;
+          color: var(--reader-ink);
+          margin-bottom: 1.15rem;
         }
         .story-section h2.story-title {
-          font-size: 1.45rem;
+          font-size: clamp(1.3rem, 4.2vw, 1.65rem);
         }
         .page-separator {
           text-align: center;
-          margin: 2rem 0;
-          color: #8e877f;
+          margin: 1.6rem 0 1.2rem;
+          color: var(--reader-muted);
           font-family: system-ui, sans-serif;
-          font-size: 0.8rem;
+          font-size: 0.74rem;
           letter-spacing: 0.08em;
           text-transform: uppercase;
         }
@@ -1614,25 +2099,67 @@ export const USERSCRIPT = `// ==UserScript==
           content: '—';
           margin: 0 0.5rem;
         }
-        .story-content p { margin-bottom: 1.2rem; }
-        .story-content { orphans: 3; widows: 3; }
+        .story-content {
+          orphans: 3;
+          widows: 3;
+          word-break: break-word;
+        }
+        .story-content > * {
+          margin: 0 0 1rem;
+        }
+        .story-content p,
+        .story-content li,
+        .story-content blockquote,
+        .story-content div {
+          font-size: 1.02rem;
+        }
+        .story-content ul,
+        .story-content ol,
+        .story-content blockquote {
+          padding-left: 1.25rem;
+        }
+        .story-content pre {
+          white-space: pre-wrap;
+          overflow-wrap: anywhere;
+        }
+        .story-content a {
+          color: var(--reader-accent);
+        }
         .download-footer {
-          margin-top: 3rem;
+          margin-top: 2.25rem;
           padding-top: 1rem;
-          border-top: 1px solid #ddd7cf;
-          color: #6c6257;
+          border-top: 1px solid var(--reader-rule);
+          color: var(--reader-muted);
           font-family: system-ui, sans-serif;
-          font-size: 0.9rem;
+          font-size: 0.86rem;
         }
         .download-footer a {
-          color: #8b1538;
+          color: var(--reader-accent);
           text-decoration: none;
         }
         .download-footer a:hover {
           text-decoration: underline;
         }
+        @media (max-width: 640px) {
+          .reader-shell {
+            padding: 0.55rem 0.4rem 1.6rem;
+          }
+          .reader-paper {
+            border-radius: 12px;
+            padding: 1rem 0.85rem 1.3rem;
+            box-shadow: none;
+          }
+          .story-content p,
+          .story-content li,
+          .story-content blockquote,
+          .story-content div {
+            font-size: 1rem;
+          }
+        }
         @media print {
-          body { background: white; padding: 0; max-width: none; }
+          body { background: white; }
+          .reader-shell { max-width: none; padding: 0; }
+          .reader-paper { box-shadow: none; border-radius: 0; padding: 0; }
         }
       \`;
     }
@@ -1666,12 +2193,17 @@ export const USERSCRIPT = `// ==UserScript==
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light">
   <title>\${escapeHtml(storyData.title)}</title>
   <style>\${readingCSS()}</style>
 </head>
 <body>
-  \${buildStoryBody(storyData)}
-  \${buildDownloadFooter()}
+  <main class="reader-shell">
+    <article class="reader-paper">
+      \${buildStoryBody(storyData)}
+      \${buildDownloadFooter()}
+    </article>
+  </main>
 </body>
 </html>\`;
     }
@@ -1688,12 +2220,17 @@ export const USERSCRIPT = `// ==UserScript==
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light">
   <title>\${escapeHtml(group.title)}</title>
   <style>\${readingCSS()}</style>
 </head>
 <body>
-  \${storiesHTML}
-  \${buildDownloadFooter()}
+  <main class="reader-shell">
+    <article class="reader-paper">
+      \${storiesHTML}
+      \${buildDownloadFooter()}
+    </article>
+  </main>
 </body>
 </html>\`;
     }
@@ -1906,19 +2443,6 @@ export const USERSCRIPT = `// ==UserScript==
       return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 60);
     }
 
-    function processPageTextEPUB(text) {
-      if (!text) return '<p><em>[No content available]</em></p>';
-      let processed = text
-        .replace(/<script[\\s\\S]*?<\\/script>/gi, '')
-        .replace(/<style[\\s\\S]*?<\\/style>/gi, '')
-        .replace(/on\\w+="[^"]*"/gi, '')
-        .replace(/on\\w+='[^']*'/gi, '');
-      if (!processed.trim().startsWith('<')) {
-        processed = processed.split('\\n\\n').map(p => '<p>' + p.replace(/\\n/g, '<br/>') + '</p>').join('\\n');
-      }
-      return processed;
-    }
-
     function buildStorySectionBody(storyData, options = {}) {
       const showStoryTitle = options.showStoryTitle !== false;
       const chapterLabel = options.chapterLabel || '';
@@ -1929,30 +2453,29 @@ export const USERSCRIPT = `// ==UserScript==
       const labelHtml = chapterLabel ? '<p class="section-label">' + HTMLBuilder.escapeHtml(chapterLabel) + '</p>' : '';
       const pagesHTML = pages.map((pg, index) => {
         const pageLabel = index > 0 ? '<h2>Page ' + pg.pageNum + '</h2>' : '';
-        return pageLabel + processPageTextEPUB(pg.text);
+        return pageLabel + StoryMarkup.toXHTMLFragment(pg.text);
       }).join('\\n');
       const footerHtml = includeFooter ? HTMLBuilder.buildDownloadFooterXHTML() : '';
       return labelHtml + titleHtml + pagesHTML + footerHtml;
     }
 
-    async function buildEPUBBook(book, outputType = 'blob') {
-      const zip = new JSZip();
+    async function buildEPUBBook(book, outputType = 'blob', shouldCancel) {
       const uid = generateUUID();
       const { title, author, authorName, category, description, sections, slug, dateISO } = book;
+      if (!sections || !sections.length) {
+        throw new Error('EPUB requires at least one content section.');
+      }
       const safeTitle = HTMLBuilder.escapeHtml(title);
       const safeAuthor = HTMLBuilder.escapeHtml(authorName || author);
       const authorLine = safeAuthor ? '<p class="by">by ' + safeAuthor + '</p>' : '';
 
-      // mimetype (must be first, uncompressed)
-      zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
-
       // META-INF/container.xml
-      zip.file('META-INF/container.xml', \`<?xml version="1.0" encoding="UTF-8"?>
+      const containerXml = \`<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:schemas:container">
   <rootfiles>
     <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
   </rootfiles>
-</container>\`);
+</container>\`;
 
       // Title page
       const coverXHTML = \`<?xml version="1.0" encoding="utf-8"?>
@@ -1976,8 +2499,6 @@ export const USERSCRIPT = `// ==UserScript==
   </div>
 </body>
 </html>\`;
-
-      zip.file('OEBPS/cover.xhtml', coverXHTML);
 
       // Content sections
       const chapterFiles = [];
@@ -2005,8 +2526,8 @@ export const USERSCRIPT = `// ==UserScript==
 </body>
 </html>\`;
 
-        zip.file('OEBPS/' + filename, xhtml);
         chapterFiles.push({ id, filename, title: section.title });
+        chapterFiles[chapterFiles.length - 1].xhtml = xhtml;
       });
 
       // content.opf
@@ -2032,7 +2553,6 @@ export const USERSCRIPT = `// ==UserScript==
     <dc:date>\${dateISO}</dc:date>
     <dc:language>en</dc:language>
     \${slug ? '<dc:source>https://www.literotica.com/s/' + slug + '</dc:source>' : ''}
-    <meta name="cover" content="cover"/>
   </metadata>
   <manifest>
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
@@ -2042,8 +2562,6 @@ export const USERSCRIPT = `// ==UserScript==
     \${spineItems}
   </spine>
 </package>\`;
-
-      zip.file('OEBPS/content.opf', opf);
 
       // toc.ncx
       const navPoints = [
@@ -2065,15 +2583,39 @@ export const USERSCRIPT = `// ==UserScript==
   </navMap>
 </ncx>\`;
 
-      zip.file('OEBPS/toc.ncx', ncx);
+      const files = [
+        { name: 'mimetype', data: 'application/epub+zip', date: new Date(0) },
+        { name: 'META-INF/container.xml', data: containerXml },
+        { name: 'OEBPS/cover.xhtml', data: coverXHTML },
+        ...chapterFiles.map(file => ({ name: 'OEBPS/' + file.filename, data: file.xhtml })),
+        { name: 'OEBPS/content.opf', data: opf },
+        { name: 'OEBPS/toc.ncx', data: ncx },
+      ];
 
-      return zip.generateAsync({
-        type: outputType,
-        mimeType: outputType === 'blob' ? 'application/epub+zip' : undefined
+      const requiredNames = ['mimetype', 'META-INF/container.xml', 'OEBPS/cover.xhtml', 'OEBPS/content.opf', 'OEBPS/toc.ncx'];
+      requiredNames.forEach(name => {
+        if (!files.find(file => file.name === name)) {
+          throw new Error('EPUB packaging is missing required file: ' + name);
+        }
       });
+
+      StoryMarkup.validateXMLDocument(containerXml, 'application/xml', 'EPUB container.xml');
+      StoryMarkup.validateXMLDocument(coverXHTML, 'application/xhtml+xml', 'EPUB cover');
+      chapterFiles.forEach(file => {
+        StoryMarkup.validateXMLDocument(file.xhtml, 'application/xhtml+xml', 'EPUB section ' + file.title);
+      });
+      StoryMarkup.validateXMLDocument(opf, 'application/xml', 'EPUB package.opf');
+      StoryMarkup.validateXMLDocument(ncx, 'application/xml', 'EPUB toc.ncx');
+
+      return StoredZIPBuilder.buildArchive(
+        files,
+        null,
+        shouldCancel,
+        { outputType, mimeType: 'application/epub+zip' }
+      );
     }
 
-    async function buildEPUB(storyData) {
+    async function buildEPUB(storyData, shouldCancel) {
       return buildEPUBBook({
         title: storyData.title,
         author: storyData.author,
@@ -2086,10 +2628,10 @@ export const USERSCRIPT = `// ==UserScript==
           title: storyData.title,
           body: buildStorySectionBody(storyData, { showStoryTitle: false }),
         }],
-      }, 'blob');
+      }, 'blob', shouldCancel);
     }
 
-    async function buildEPUBBytes(storyData) {
+    async function buildEPUBBytes(storyData, shouldCancel) {
       return buildEPUBBook({
         title: storyData.title,
         author: storyData.author,
@@ -2102,10 +2644,10 @@ export const USERSCRIPT = `// ==UserScript==
           title: storyData.title,
           body: buildStorySectionBody(storyData, { showStoryTitle: false }),
         }],
-      }, 'uint8array');
+      }, 'uint8array', shouldCancel);
     }
 
-    async function buildCombinedEPUB(group) {
+    async function buildCombinedEPUB(group, shouldCancel) {
       return buildEPUBBook({
         title: group.title,
         author: group.author,
@@ -2122,10 +2664,10 @@ export const USERSCRIPT = `// ==UserScript==
             chapterLabel: group.isSeries ? 'Chapter ' + (index + 1) : '',
           }),
         })),
-      }, 'blob');
+      }, 'blob', shouldCancel);
     }
 
-    async function buildCombinedEPUBBytes(group) {
+    async function buildCombinedEPUBBytes(group, shouldCancel) {
       return buildEPUBBook({
         title: group.title,
         author: group.author,
@@ -2142,7 +2684,7 @@ export const USERSCRIPT = `// ==UserScript==
             chapterLabel: group.isSeries ? 'Chapter ' + (index + 1) : '',
           }),
         })),
-      }, 'uint8array');
+      }, 'uint8array', shouldCancel);
     }
 
     return { buildEPUB, buildEPUBBytes, buildCombinedEPUB, buildCombinedEPUBBytes };
@@ -2223,7 +2765,9 @@ export const USERSCRIPT = `// ==UserScript==
       }
     }
 
-    async function buildArchive(files, onProgress, shouldCancel) {
+    async function buildArchive(files, onProgress, shouldCancel, options = {}) {
+      const outputType = options.outputType || 'blob';
+      const mimeType = options.mimeType || 'application/zip';
       const normalizedFiles = files.map(file => {
         const nameBytes = encodeUTF8(file.name);
         const dataBytes = toUint8Array(file.data);
@@ -2331,7 +2875,11 @@ export const USERSCRIPT = `// ==UserScript==
         onProgress(totalStages, totalStages, 'ZIP archive ready');
       }
 
-      return new Blob([output], { type: 'application/zip' });
+      if (outputType === 'uint8array') {
+        return output;
+      }
+
+      return new Blob([output], { type: mimeType });
     }
 
     return { buildArchive };
@@ -2420,8 +2968,8 @@ export const USERSCRIPT = `// ==UserScript==
               if (shouldCancel && shouldCancel()) throw makeAbortError();
               Logger.info('Generating combined EPUB: ' + group.title);
               const epubBytes = group.stories.length === 1
-                ? await EPUBBuilder.buildEPUBBytes(group.stories[0])
-                : await EPUBBuilder.buildCombinedEPUBBytes(group);
+              ? await EPUBBuilder.buildEPUBBytes(group.stories[0], shouldCancel)
+                : await EPUBBuilder.buildCombinedEPUBBytes(group, shouldCancel);
               const filename = HTMLBuilder.groupFilename(group) + '.epub';
               epubFolder.file(filename, epubBytes);
               entry.epub = 'epub/' + filename;
@@ -2471,7 +3019,7 @@ export const USERSCRIPT = `// ==UserScript==
               if (selectedFormats.epub && epubFolder) {
                 if (shouldCancel && shouldCancel()) throw makeAbortError();
                 Logger.info('Generating EPUB: ' + storyData.title);
-                const epubBytes = await EPUBBuilder.buildEPUBBytes(storyData);
+                const epubBytes = await EPUBBuilder.buildEPUBBytes(storyData, shouldCancel);
                 const filename = HTMLBuilder.storyFilename(storyData) + '.epub';
                 epubFolder.file(filename, epubBytes);
                 entry.epub = 'epub/' + filename;
@@ -3410,7 +3958,7 @@ export const USERSCRIPT = `// ==UserScript==
             <span>\${HTMLBuilder.escapeHtml(story.category)}</span>
             \${story.rating > 0 ? '<span class="litdl-rating">★ ' + story.rating.toFixed(2) + '</span>' : ''}
             <span>\${story.dateFormatted}</span>
-            <span>\${story.pageCount}p</span>
+            \${story.pageCount > 0 ? '<span>' + story.pageCount + 'p</span>' : ''}
             \${story.wordCount > 0 ? '<span>~' + Math.round(story.wordCount / 1000) + 'k words</span>' : ''}
           </div>
         </div>
@@ -3446,7 +3994,7 @@ export const USERSCRIPT = `// ==UserScript==
               <span>\${HTMLBuilder.escapeHtml(series.category)}</span>
               \${series.rating > 0 ? '<span class="litdl-rating">★ ' + series.rating.toFixed(2) + '</span>' : ''}
               <span>\${series.chapters.length} chapters</span>
-              <span>\${series.pageCount}p total</span>
+              \${series.pageCount > 0 ? '<span>' + series.pageCount + 'p total</span>' : ''}
             </div>
             <span class="litdl-series-label">SERIES — \${selectedCount}/\${series.chapters.length} selected</span>
           </div>
@@ -3461,7 +4009,7 @@ export const USERSCRIPT = `// ==UserScript==
               <div class="litdl-story-meta">
                 \${ch.rating > 0 ? '<span class="litdl-rating">★ ' + ch.rating.toFixed(2) + '</span>' : ''}
                 <span>\${ch.dateFormatted}</span>
-                <span>\${ch.pageCount}p</span>
+                \${ch.pageCount > 0 ? '<span>' + ch.pageCount + 'p</span>' : ''}
               </div>
             </div>
           </div>\`;
@@ -3539,6 +4087,19 @@ export const USERSCRIPT = `// ==UserScript==
   function finishDownloadSession() {
     activeDownloadController = null;
     downloadAbortRequested = false;
+  }
+
+  if (window.__LITDL_HARNESS__) {
+    window.__LITDL_HARNESS_API__ = {
+      version: SCRIPT_VERSION,
+      buildStoryHTML: HTMLBuilder.buildStoryHTML,
+      buildCombinedHTML: HTMLBuilder.buildCombinedHTML,
+      buildStoryText: TextBuilder.buildStoryText,
+      buildCombinedText: TextBuilder.buildCombinedText,
+      buildEPUBBytes: EPUBBuilder.buildEPUBBytes,
+      buildCombinedEPUBBytes: EPUBBuilder.buildCombinedEPUBBytes,
+    };
+    return;
   }
 
   async function startDownload() {
@@ -3640,9 +4201,10 @@ export const USERSCRIPT = `// ==UserScript==
           UI.updateProgress(0, 1, 'Generating EPUB: ' + collectionGroup.title);
           Logger.info('Building EPUB: ' + collectionGroup.title);
           try {
-            const blob = collectionGroup.stories.length === 1
-              ? await EPUBBuilder.buildEPUB(collectionGroup.stories[0])
-              : await EPUBBuilder.buildCombinedEPUB(collectionGroup);
+            const epubBytes = collectionGroup.stories.length === 1
+              ? await EPUBBuilder.buildEPUBBytes(collectionGroup.stories[0], () => downloadAbortRequested)
+              : await EPUBBuilder.buildCombinedEPUBBytes(collectionGroup, () => downloadAbortRequested);
+            const blob = createBinaryBlob(epubBytes, 'application/epub+zip');
             ensureDownloadNotAborted();
             saveAs(blob, HTMLBuilder.groupFilename(collectionGroup) + '.epub');
           } catch (err) {
@@ -3678,7 +4240,8 @@ export const USERSCRIPT = `// ==UserScript==
             UI.updateProgress(i, downloadedStories.length, 'Generating EPUB: ' + story.title);
             Logger.info('Building EPUB: ' + story.title);
             try {
-              const blob = await EPUBBuilder.buildEPUB(story);
+              const epubBytes = await EPUBBuilder.buildEPUBBytes(story, () => downloadAbortRequested);
+              const blob = createBinaryBlob(epubBytes, 'application/epub+zip');
               ensureDownloadNotAborted();
               saveAs(blob, HTMLBuilder.storyFilename(story) + '.epub');
             } catch (err) {

@@ -1,10 +1,9 @@
 # Literotica Downloader V2
 
-Release documentation for Literotica Downloader V2. This build uses direct site HTML parsing rather than the old `/api/3/` flow and supports filtered selection, combined or separate exports, and branded `HTML`, `EPUB`, `TXT`, and `ZIP` output.
+Release documentation for Literotica Downloader V2. This build reads author catalog pages from site HTML and builds story exports from Literotica's rendered story markup when available, with fallback extraction for pages that do not expose the rendered content cleanly.
 
 ## Current release
-- Version: `2.1.5`
-- Version: `2.1.6`
+- Version: `2.1.12`
 - Firefox target: Greasemonkey
 - Chrome target: Tampermonkey
 
@@ -40,8 +39,8 @@ Release documentation for Literotica Downloader V2. This build uses direct site 
 8. Click `Download`.
 
 ## Output behavior
-- `HTML`: reader-friendly file with title, story content, and Easy Space Studios footer.
-- `EPUB`: export-ready ebook with footer branding in the book content.
+- `HTML`: mobile-friendly reader file that preserves story paragraphs and line breaks, plus the Easy Space Studios footer.
+- `EPUB`: export-ready ebook built from the same sanitized story markup and validated before packaging.
 - `TXT`: plain text export with ASCII footer branding.
 - `ZIP Package`: package containing selected export formats plus `index.html` and `manifest.json`.
 
@@ -50,6 +49,11 @@ Release documentation for Literotica Downloader V2. This build uses direct site 
 - At least one content format always remains enabled.
 - Download speed depends on story size, page count, and network conditions.
 - This script is for personal-use downloading and organization. It does not bypass paywalls.
+
+## Fixture harness
+- The app includes a `Fixture Harness` tab for repeatable export regression checks.
+- It boots the current userscript template in a hidden iframe and runs the real `HTML`, `TXT`, and `EPUB` builders against deterministic sample story data.
+- Use it after changing story extraction, export CSS, text conversion, or EPUB packaging to regenerate known sample files for desktop, Android, and reader-app checks.
 
 ## Release docs
 - Changelog: [CHANGELOG.md](D:\Desktop\literotica-author-library-downloader\CHANGELOG.md)

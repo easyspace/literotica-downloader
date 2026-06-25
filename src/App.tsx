@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { USERSCRIPT } from "./userscript";
+import FixtureHarness from "./FixtureHarness";
 
 // ─── Types ────────────────────────────────────────────────────
-type Tab = "install" | "script" | "features" | "api" | "changelog";
+type Tab = "install" | "script" | "features" | "api" | "fixtures" | "changelog";
 type CopyState = "idle" | "copied" | "error";
 
 // ─── Constants ────────────────────────────────────────────────
@@ -11,6 +12,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "script", label: "Script Code", icon: "📋" },
   { id: "features", label: "Features", icon: "✨" },
   { id: "api", label: "API Reference", icon: "🔌" },
+  { id: "fixtures", label: "Fixture Harness", icon: "🧪" },
   { id: "changelog", label: "Changelog", icon: "📜" },
 ];
 
@@ -947,6 +949,7 @@ export default function App() {
         {activeTab === "script" && <ScriptTab />}
         {activeTab === "features" && <FeaturesTab />}
         {activeTab === "api" && <APITab />}
+        {activeTab === "fixtures" && <FixtureHarness />}
         {activeTab === "changelog" && <ChangelogTab />}
       </main>
 

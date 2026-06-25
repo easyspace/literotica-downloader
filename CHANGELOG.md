@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.1.12 - 2026-06-20
+
+This release switches story exports to rendered-page markup first, improves the standalone HTML reader on phones, and hardens EPUB generation so malformed story fragments fail fast instead of producing unreadable books.
+
+### Fixed
+- Preserved paragraph and line-break structure by extracting rendered story content from the Literotica page before falling back to embedded story markup.
+- Fixed the exported HTML "wall of text" regression by keeping story markup as HTML fragments instead of rebuilding from aggressively normalized text.
+- Improved mobile HTML readability so exported files open cleanly on narrow screens without desktop-site mode.
+- Fixed EPUB generation failures caused by malformed or unsupported story markup by converting export content through an XHTML-safe serializer.
+- Added EPUB validation checks for `container.xml`, section XHTML, `content.opf`, and `toc.ncx` before packaging.
+
+### Changed
+- Made the rendered story DOM the primary source for exported story content, with embedded `pageText` kept only as a fallback path.
+- Updated the HTML reader layout to use a mobile-first paper layout with lighter spacing and safer typography.
+- Removed the invalid EPUB cover metadata reference that pointed at a non-image manifest entry.
+- Added an in-app fixture harness that generates deterministic sample HTML, TXT, and EPUB outputs from the current userscript builders for repeatable regression testing.
+
 ## 2.1.6 - 2026-06-14
 
 This release keeps the Firefox + Greasemonkey path stable and adds the Chrome + Tampermonkey packaging fixes needed for large TXT ZIP exports.
