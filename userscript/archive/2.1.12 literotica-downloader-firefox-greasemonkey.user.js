@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        Literotica Downloader for Chrome / Tampermonkey
+// @name        Literotica Downloader for Firefox / Greasemonkey
 // @namespace    https://studios.easyspace.in
-// @version      2.1.15
+// @version      2.1.12
 // @description  Download complete author libraries from Literotica using the site HTML. Supports HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
 // @author       easyspace
 // @license      All Rights Reserved
@@ -12,17 +12,12 @@
 // @match        https://www.literotica.com/stories/memberpage.php*
 // @match        https://literotica.com/stories/memberpage.php*
 // @grant        GM.getValue
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM.xmlHttpRequest
-// @grant        GM_xmlhttpRequest
 // @grant        GM.setValue
 // @connect      literotica.com
 // @connect      www.literotica.com
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js
-// @run-at      document-idle
-// @inject-into  content
+// @run-at       document-end
 // @noframes
 // ==/UserScript==
  
@@ -51,7 +46,7 @@
   // ============================================================
  
   const API_BASE = 'https://www.literotica.com/api/3';
-  const SCRIPT_VERSION = '2.1.15';
+  const SCRIPT_VERSION = '2.1.12';
   const REQUEST_DELAY_MIN = 300;
   const REQUEST_DELAY_MAX = 500;
   const MAX_RETRIES = 3;
@@ -121,11 +116,6 @@
   function randomDelay() {
     const ms = REQUEST_DELAY_MIN + Math.random() * (REQUEST_DELAY_MAX - REQUEST_DELAY_MIN);
     return sleep(ms);
-  }
- 
-  function createBinaryBlob(data, mimeType) {
-    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-    return new Blob([bytes], { type: mimeType });
   }
  
   async function gmFetch(url, options = {}) {
@@ -850,35 +840,25 @@
     return 0;
   }
 
-  function extractEmbeddedCatalogTotal(html, author) {
-    if (!html || !author) return 0;
+  function extractEmbeddedCatalogTotal(html) {
+    if (!html) return 0;
 
-    const authorPattern = new RegExp('username:"' + escapeRegex(author) + '"', 'ig');
-    let maxStoriesTotal = 0;
-    let maxStoriesAndSeriesTotal = 0;
-    let match;
+    const patterns = [
+      /current_page:\d+,last_page:\d+,total:(\d+),per_page:\d+,has_series:/g,
+      /stories_and_series_count:(\d+)/g,
+      /stories_count:(\d+)/g,
+    ];
+    let maxTotal = 0;
 
-    while ((match = authorPattern.exec(html)) !== null) {
-      const start = Math.max(0, match.index - 2200);
-      const end = Math.min(html.length, match.index + 2200);
-      const snippet = html.slice(start, end);
-
-      let storiesMatch;
-      const storiesPattern = /stories_count:(\d+)/g;
-      while ((storiesMatch = storiesPattern.exec(snippet)) !== null) {
-        const value = parseInt(storiesMatch[1], 10) || 0;
-        if (value > maxStoriesTotal) maxStoriesTotal = value;
+    patterns.forEach(pattern => {
+      let match;
+      while ((match = pattern.exec(html)) !== null) {
+        const value = parseInt(match[1], 10) || 0;
+        if (value > maxTotal) maxTotal = value;
       }
+    });
 
-      let storiesAndSeriesMatch;
-      const storiesAndSeriesPattern = /stories_and_series_count:(\d+)/g;
-      while ((storiesAndSeriesMatch = storiesAndSeriesPattern.exec(snippet)) !== null) {
-        const value = parseInt(storiesAndSeriesMatch[1], 10) || 0;
-        if (value > maxStoriesAndSeriesTotal) maxStoriesAndSeriesTotal = value;
-      }
-    }
-
-    return maxStoriesTotal || maxStoriesAndSeriesTotal;
+    return maxTotal;
   }
  
   function extractCatalogFromEmbeddedData(html, author, authorName) {
@@ -939,7 +919,7 @@
     return {
       authorName: authorName || author,
       items: Array.from(itemsBySlug.values()),
-      targetTotal: extractEmbeddedCatalogTotal(html, author),
+      targetTotal: extractEmbeddedCatalogTotal(html),
     };
   }
  
@@ -1115,10 +1095,7 @@
       ? extractCatalogFromEmbeddedData(html, author, parsed.authorName)
       : { authorName: parsed.authorName, items: [], targetTotal: 0 };
     const embeddedCount = embeddedParsed.items.length;
-    const pageReportedTotal = Math.max(currentPageTotal, allPageTotal);
-    const worksPageTotal = pageReportedTotal > 0
-      ? pageReportedTotal
-      : (embeddedParsed.targetTotal || 0);
+    const worksPageTotal = Math.max(currentPageTotal, allPageTotal, embeddedParsed.targetTotal || 0);
  
     if (currentPageTotal > 0 || allPageTotal > 0 || embeddedParsed.targetTotal > 0) {
       Logger.info(
@@ -1993,20 +1970,24 @@
       return labelHtml + titleHtml + pagesHTML + footerHtml;
     }
  
-    async function buildEPUBBook(book, outputType = 'blob', shouldCancel) {
+    async function buildEPUBBook(book, outputType = 'blob') {
+      const zip = new JSZip();
       const uid = generateUUID();
       const { title, author, authorName, category, description, sections, slug, dateISO } = book;
       const safeTitle = HTMLBuilder.escapeHtml(title);
       const safeAuthor = HTMLBuilder.escapeHtml(authorName || author);
       const authorLine = safeAuthor ? '<p class="by">by ' + safeAuthor + '</p>' : '';
  
+      // mimetype (must be first, uncompressed)
+      zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
+ 
       // META-INF/container.xml
-      const containerXml = `<?xml version="1.0" encoding="UTF-8"?>
+      zip.file('META-INF/container.xml', `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:schemas:container">
   <rootfiles>
     <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
   </rootfiles>
-</container>`;
+</container>`);
  
       // Title page
       const coverXHTML = `<?xml version="1.0" encoding="utf-8"?>
@@ -2030,6 +2011,8 @@
   </div>
 </body>
 </html>`;
+ 
+      zip.file('OEBPS/cover.xhtml', coverXHTML);
  
       // Content sections
       const chapterFiles = [];
@@ -2057,8 +2040,8 @@
 </body>
 </html>`;
  
+        zip.file('OEBPS/' + filename, xhtml);
         chapterFiles.push({ id, filename, title: section.title });
-        chapterFiles[chapterFiles.length - 1].xhtml = xhtml;
       });
  
       // content.opf
@@ -2095,6 +2078,8 @@
   </spine>
 </package>`;
  
+      zip.file('OEBPS/content.opf', opf);
+ 
       // toc.ncx
       const navPoints = [
         `<navPoint id="cover" playOrder="1"><navLabel><text>Cover</text></navLabel><content src="cover.xhtml"/></navPoint>`,
@@ -2115,24 +2100,15 @@
   </navMap>
 </ncx>`;
  
-      const files = [
-        { name: 'mimetype', data: 'application/epub+zip', date: new Date(0) },
-        { name: 'META-INF/container.xml', data: containerXml },
-        { name: 'OEBPS/cover.xhtml', data: coverXHTML },
-        ...chapterFiles.map(file => ({ name: 'OEBPS/' + file.filename, data: file.xhtml })),
-        { name: 'OEBPS/content.opf', data: opf },
-        { name: 'OEBPS/toc.ncx', data: ncx },
-      ];
+      zip.file('OEBPS/toc.ncx', ncx);
  
-      return StoredZIPBuilder.buildArchive(
-        files,
-        null,
-        shouldCancel,
-        { outputType, mimeType: 'application/epub+zip' }
-      );
+      return zip.generateAsync({
+        type: outputType,
+        mimeType: outputType === 'blob' ? 'application/epub+zip' : undefined
+      });
     }
  
-    async function buildEPUB(storyData, shouldCancel) {
+    async function buildEPUB(storyData) {
       return buildEPUBBook({
         title: storyData.title,
         author: storyData.author,
@@ -2145,10 +2121,10 @@
           title: storyData.title,
           body: buildStorySectionBody(storyData, { showStoryTitle: false }),
         }],
-      }, 'blob', shouldCancel);
+      }, 'blob');
     }
  
-    async function buildEPUBBytes(storyData, shouldCancel) {
+    async function buildEPUBBytes(storyData) {
       return buildEPUBBook({
         title: storyData.title,
         author: storyData.author,
@@ -2161,10 +2137,10 @@
           title: storyData.title,
           body: buildStorySectionBody(storyData, { showStoryTitle: false }),
         }],
-      }, 'uint8array', shouldCancel);
+      }, 'uint8array');
     }
  
-    async function buildCombinedEPUB(group, shouldCancel) {
+    async function buildCombinedEPUB(group) {
       return buildEPUBBook({
         title: group.title,
         author: group.author,
@@ -2181,10 +2157,10 @@
             chapterLabel: group.isSeries ? 'Chapter ' + (index + 1) : '',
           }),
         })),
-      }, 'blob', shouldCancel);
+      }, 'blob');
     }
  
-    async function buildCombinedEPUBBytes(group, shouldCancel) {
+    async function buildCombinedEPUBBytes(group) {
       return buildEPUBBook({
         title: group.title,
         author: group.author,
@@ -2201,7 +2177,7 @@
             chapterLabel: group.isSeries ? 'Chapter ' + (index + 1) : '',
           }),
         })),
-      }, 'uint8array', shouldCancel);
+      }, 'uint8array');
     }
  
     return { buildEPUB, buildEPUBBytes, buildCombinedEPUB, buildCombinedEPUBBytes };
@@ -2282,9 +2258,7 @@
       }
     }
  
-    async function buildArchive(files, onProgress, shouldCancel, options = {}) {
-      const outputType = options.outputType || 'blob';
-      const mimeType = options.mimeType || 'application/zip';
+    async function buildArchive(files, onProgress, shouldCancel) {
       const normalizedFiles = files.map(file => {
         const nameBytes = encodeUTF8(file.name);
         const dataBytes = toUint8Array(file.data);
@@ -2392,11 +2366,7 @@
         onProgress(totalStages, totalStages, 'ZIP archive ready');
       }
  
-      if (outputType === 'uint8array') {
-        return output;
-      }
- 
-      return new Blob([output], { type: mimeType });
+      return new Blob([output], { type: 'application/zip' });
     }
  
     return { buildArchive };
@@ -2485,8 +2455,8 @@
               if (shouldCancel && shouldCancel()) throw makeAbortError();
               Logger.info('Generating combined EPUB: ' + group.title);
               const epubBytes = group.stories.length === 1
-              ? await EPUBBuilder.buildEPUBBytes(group.stories[0], shouldCancel)
-                : await EPUBBuilder.buildCombinedEPUBBytes(group, shouldCancel);
+                ? await EPUBBuilder.buildEPUBBytes(group.stories[0])
+                : await EPUBBuilder.buildCombinedEPUBBytes(group);
               const filename = HTMLBuilder.groupFilename(group) + '.epub';
               epubFolder.file(filename, epubBytes);
               entry.epub = 'epub/' + filename;
@@ -2536,7 +2506,7 @@
               if (selectedFormats.epub && epubFolder) {
                 if (shouldCancel && shouldCancel()) throw makeAbortError();
                 Logger.info('Generating EPUB: ' + storyData.title);
-                const epubBytes = await EPUBBuilder.buildEPUBBytes(storyData, shouldCancel);
+                const epubBytes = await EPUBBuilder.buildEPUBBytes(storyData);
                 const filename = HTMLBuilder.storyFilename(storyData) + '.epub';
                 epubFolder.file(filename, epubBytes);
                 entry.epub = 'epub/' + filename;
@@ -3705,10 +3675,9 @@
           UI.updateProgress(0, 1, 'Generating EPUB: ' + collectionGroup.title);
           Logger.info('Building EPUB: ' + collectionGroup.title);
           try {
-            const epubBytes = collectionGroup.stories.length === 1
-              ? await EPUBBuilder.buildEPUBBytes(collectionGroup.stories[0], () => downloadAbortRequested)
-              : await EPUBBuilder.buildCombinedEPUBBytes(collectionGroup, () => downloadAbortRequested);
-            const blob = createBinaryBlob(epubBytes, 'application/epub+zip');
+            const blob = collectionGroup.stories.length === 1
+              ? await EPUBBuilder.buildEPUB(collectionGroup.stories[0])
+              : await EPUBBuilder.buildCombinedEPUB(collectionGroup);
             ensureDownloadNotAborted();
             saveAs(blob, HTMLBuilder.groupFilename(collectionGroup) + '.epub');
           } catch (err) {
@@ -3744,8 +3713,7 @@
             UI.updateProgress(i, downloadedStories.length, 'Generating EPUB: ' + story.title);
             Logger.info('Building EPUB: ' + story.title);
             try {
-              const epubBytes = await EPUBBuilder.buildEPUBBytes(story, () => downloadAbortRequested);
-              const blob = createBinaryBlob(epubBytes, 'application/epub+zip');
+              const blob = await EPUBBuilder.buildEPUB(story);
               ensureDownloadNotAborted();
               saveAs(blob, HTMLBuilder.storyFilename(story) + '.epub');
             } catch (err) {

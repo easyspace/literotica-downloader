@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Literotica Downloader for Chrome / Tampermonkey
 // @namespace    https://studios.easyspace.in
-// @version      2.1.15
+// @version      2.1.13
 // @description  Download complete author libraries from Literotica using the site HTML. Supports HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
 // @author       easyspace
 // @license      All Rights Reserved
@@ -51,7 +51,7 @@
   // ============================================================
  
   const API_BASE = 'https://www.literotica.com/api/3';
-  const SCRIPT_VERSION = '2.1.15';
+  const SCRIPT_VERSION = '2.1.13';
   const REQUEST_DELAY_MIN = 300;
   const REQUEST_DELAY_MAX = 500;
   const MAX_RETRIES = 3;
@@ -850,35 +850,25 @@
     return 0;
   }
 
-  function extractEmbeddedCatalogTotal(html, author) {
-    if (!html || !author) return 0;
+  function extractEmbeddedCatalogTotal(html) {
+    if (!html) return 0;
 
-    const authorPattern = new RegExp('username:"' + escapeRegex(author) + '"', 'ig');
-    let maxStoriesTotal = 0;
-    let maxStoriesAndSeriesTotal = 0;
-    let match;
+    const patterns = [
+      /current_page:\d+,last_page:\d+,total:(\d+),per_page:\d+,has_series:/g,
+      /stories_and_series_count:(\d+)/g,
+      /stories_count:(\d+)/g,
+    ];
+    let maxTotal = 0;
 
-    while ((match = authorPattern.exec(html)) !== null) {
-      const start = Math.max(0, match.index - 2200);
-      const end = Math.min(html.length, match.index + 2200);
-      const snippet = html.slice(start, end);
-
-      let storiesMatch;
-      const storiesPattern = /stories_count:(\d+)/g;
-      while ((storiesMatch = storiesPattern.exec(snippet)) !== null) {
-        const value = parseInt(storiesMatch[1], 10) || 0;
-        if (value > maxStoriesTotal) maxStoriesTotal = value;
+    patterns.forEach(pattern => {
+      let match;
+      while ((match = pattern.exec(html)) !== null) {
+        const value = parseInt(match[1], 10) || 0;
+        if (value > maxTotal) maxTotal = value;
       }
+    });
 
-      let storiesAndSeriesMatch;
-      const storiesAndSeriesPattern = /stories_and_series_count:(\d+)/g;
-      while ((storiesAndSeriesMatch = storiesAndSeriesPattern.exec(snippet)) !== null) {
-        const value = parseInt(storiesAndSeriesMatch[1], 10) || 0;
-        if (value > maxStoriesAndSeriesTotal) maxStoriesAndSeriesTotal = value;
-      }
-    }
-
-    return maxStoriesTotal || maxStoriesAndSeriesTotal;
+    return maxTotal;
   }
  
   function extractCatalogFromEmbeddedData(html, author, authorName) {
@@ -939,7 +929,7 @@
     return {
       authorName: authorName || author,
       items: Array.from(itemsBySlug.values()),
-      targetTotal: extractEmbeddedCatalogTotal(html, author),
+      targetTotal: extractEmbeddedCatalogTotal(html),
     };
   }
  
@@ -1115,10 +1105,7 @@
       ? extractCatalogFromEmbeddedData(html, author, parsed.authorName)
       : { authorName: parsed.authorName, items: [], targetTotal: 0 };
     const embeddedCount = embeddedParsed.items.length;
-    const pageReportedTotal = Math.max(currentPageTotal, allPageTotal);
-    const worksPageTotal = pageReportedTotal > 0
-      ? pageReportedTotal
-      : (embeddedParsed.targetTotal || 0);
+    const worksPageTotal = Math.max(currentPageTotal, allPageTotal, embeddedParsed.targetTotal || 0);
  
     if (currentPageTotal > 0 || allPageTotal > 0 || embeddedParsed.targetTotal > 0) {
       Logger.info(

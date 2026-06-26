@@ -13,6 +13,7 @@ const chromeUserscriptPath = path.resolve(
   "literotica-downloader-chrome-tampermonkey.user.js",
 );
 const chromeUserscript = fs.readFileSync(chromeUserscriptPath, "utf8");
+const archiveDir = path.resolve("userscript", "archive");
 
 function replaceMeta(userscript, key, value) {
   const lines = userscript.split("\n");
@@ -71,6 +72,17 @@ const chromeOutput = buildChromeUserscript();
 const firefoxVersion = extractUserscriptVersion(firefoxOutput);
 const chromeVersion = extractUserscriptVersion(chromeOutput);
 
+function buildArchivedVersionOutputs() {
+  if (!fs.existsSync(archiveDir)) return [];
+
+  return fs.readdirSync(archiveDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".user.js"))
+    .map((entry) => ({
+      path: path.resolve("dist", entry.name),
+      content: fs.readFileSync(path.resolve(archiveDir, entry.name), "utf8"),
+    }));
+}
+
 const outputs = [
   {
     path: path.resolve("dist", "literotica-downloader-firefox-greasemonkey.user.js"),
@@ -89,6 +101,14 @@ const outputs = [
     content: chromeOutput,
   },
   {
+    path: path.resolve("userscript", "archive", `${firefoxVersion} literotica-downloader-firefox-greasemonkey.user.js`),
+    content: firefoxOutput,
+  },
+  {
+    path: path.resolve("userscript", "archive", `${chromeVersion} literotica-downloader-chrome-tampermonkey.user.js`),
+    content: chromeOutput,
+  },
+  {
     path: path.resolve("userscript", "literotica-downloader-firefox-greasemonkey.user.js"),
     content: firefoxOutput,
   },
@@ -102,8 +122,13 @@ const outputs = [
   },
 ];
 
-for (const output of outputs) {
-  fs.mkdirSync(path.dirname(output.path), { recursive: true });
-  fs.writeFileSync(output.path, output.content, "utf8");
-  console.log("Generated:", output.path);
+const outputMap = new Map();
+for (const output of [...buildArchivedVersionOutputs(), ...outputs]) {
+  outputMap.set(output.path, output.content);
+}
+
+for (const [outputPath, content] of outputMap.entries()) {
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, content, "utf8");
+  console.log("Generated:", outputPath);
 }
