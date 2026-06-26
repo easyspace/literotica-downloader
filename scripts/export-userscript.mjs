@@ -1,16 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const sourcePath = path.resolve("src/userscript.ts");
-const source = fs.readFileSync(sourcePath, "utf8");
-const match = source.match(/export const USERSCRIPT = `([\s\S]*)`;\s*$/);
-
-if (!match) {
-  throw new Error("Could not locate USERSCRIPT template literal in src/userscript.ts");
-}
-
-const templateBody = match[1];
-const baseUserscript = Function("return `" + templateBody + "`;")();
+const baseUserscriptPath = path.resolve(
+  "userscript",
+  "baselines",
+  "literotica-downloader-firefox-greasemonkey.user.js",
+);
+const baseUserscript = fs.readFileSync(baseUserscriptPath, "utf8");
+const chromeUserscriptPath = path.resolve(
+  "userscript",
+  "baselines",
+  "literotica-downloader-chrome-tampermonkey.user.js",
+);
+const chromeUserscript = fs.readFileSync(chromeUserscriptPath, "utf8");
 
 function replaceMeta(userscript, key, value) {
   const lines = userscript.split("\n");
@@ -53,20 +55,7 @@ function buildFirefoxUserscript() {
 }
 
 function buildChromeUserscript() {
-  let userscript = baseUserscript;
-  userscript = replaceMeta(userscript, "name", "Literotica Downloader for Chrome / Tampermonkey");
-  userscript = replaceMeta(userscript, "run-at", "document-idle");
-  userscript = insertMetaAfter(userscript, "grant", [
-    "// @grant        GM_getValue",
-    "// @grant        GM_setValue",
-    "// @grant        GM.xmlHttpRequest",
-    "// @grant        GM_xmlhttpRequest",
-  ]);
-  userscript = insertMetaAfter(userscript, "run-at", [
-    "// @inject-into  content",
-  ]);
-  userscript = dedupeMetaLines(userscript);
-  return userscript;
+  return chromeUserscript;
 }
 
 const outputs = [

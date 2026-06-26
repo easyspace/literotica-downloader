@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Literotica Downloader for Chrome / Tampermonkey
 // @namespace    https://studios.easyspace.in
-// @version      2.1.14
+// @version      2.1.11
 // @description  Download complete author libraries from Literotica using the site HTML. Supports HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
 // @author       easyspace
 // @license      All Rights Reserved
@@ -25,7 +25,7 @@
 // @inject-into  content
 // @noframes
 // ==/UserScript==
-
+ 
 /* ============================================================
    LITEROTICA DOWNLOADER
    Production-Quality Author Library Downloader
@@ -42,28 +42,28 @@
    - Phase 9: Persistent Settings
    - Phase 10: Polish + Edge Cases
    ============================================================ */
-
+ 
 (function () {
   'use strict';
-
+ 
   // ============================================================
   // PHASE 1: API LAYER + RETRY ENGINE
   // ============================================================
-
+ 
   const API_BASE = 'https://www.literotica.com/api/3';
-  const SCRIPT_VERSION = '2.1.14';
+  const SCRIPT_VERSION = '2.1.11';
   const REQUEST_DELAY_MIN = 300;
   const REQUEST_DELAY_MAX = 500;
   const MAX_RETRIES = 3;
   const RETRY_BASE_DELAY = 1000;
   const LARGE_BATCH_WARNING_THRESHOLD = 30;
   const ALLOWED_HOSTS = new Set(['www.literotica.com', 'literotica.com']);
-
+ 
   console.log('[LitDL] Bootstrap start (v' + SCRIPT_VERSION + ') on ' + window.location.href);
-
+ 
   const GMCompat = (() => {
     const gmObj = typeof GM === 'object' && GM ? GM : null;
-
+ 
     function getValue(key, fallback) {
       if (gmObj && typeof gmObj.getValue === 'function') {
         return gmObj.getValue(key, fallback);
@@ -73,7 +73,7 @@
       }
       return Promise.resolve(fallback);
     }
-
+ 
     function setValue(key, value) {
       if (gmObj && typeof gmObj.setValue === 'function') {
         return gmObj.setValue(key, value);
@@ -84,7 +84,7 @@
       }
       return Promise.resolve();
     }
-
+ 
     function xmlHttpRequest(options) {
       if (gmObj && typeof gmObj.xmlHttpRequest === 'function') {
         return gmObj.xmlHttpRequest(options);
@@ -94,40 +94,40 @@
       }
       throw new Error('No userscript HTTP API available in this manager');
     }
-
+ 
     return { getValue, setValue, xmlHttpRequest };
   })();
-
+ 
   function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
-
+ 
   function makeAbortError(message = 'Download aborted by user.') {
     const err = new Error(message);
     err.name = 'AbortError';
     return err;
   }
-
+ 
   function isAbortError(err) {
     return !!(err && (err.name === 'AbortError' || /aborted/i.test(err.message || '')));
   }
-
+ 
   function throwIfAborted(signal, message) {
     if (signal && signal.aborted) {
       throw makeAbortError(message);
     }
   }
-
+ 
   function randomDelay() {
     const ms = REQUEST_DELAY_MIN + Math.random() * (REQUEST_DELAY_MAX - REQUEST_DELAY_MIN);
     return sleep(ms);
   }
-
+ 
   function createBinaryBlob(data, mimeType) {
     const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
     return new Blob([bytes], { type: mimeType });
   }
-
+ 
   async function gmFetch(url, options = {}) {
     const method = options.method || 'GET';
     const headers = {
@@ -137,7 +137,7 @@
     };
     const timeoutMs = options.timeout || 30000;
     const externalSignal = options.signal;
-
+ 
     // Literotica's /api/3/ is same-origin, so prefer native fetch. This avoids
     // userscript-manager differences around GM.xmlHttpRequest availability.
     try {
@@ -153,7 +153,7 @@
         }
       }
       const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
-
+ 
       try {
         throwIfAborted(externalSignal);
         const resp = await fetch(url, {
@@ -163,7 +163,7 @@
           credentials: 'include',
           signal: controller ? controller.signal : externalSignal,
         });
-
+ 
         const text = await resp.text();
         return {
           status: resp.status,
@@ -220,12 +220,12 @@
       });
     }
   }
-
+ 
   async function fetchWithRetry(url, options = {}, attempt = 0) {
     try {
       await randomDelay();
       const response = await gmFetch(url, options);
-
+ 
       if (response.status === 429) {
         if (attempt >= MAX_RETRIES) throw new Error('Rate limited after ' + MAX_RETRIES + ' retries');
         const backoff = RETRY_BASE_DELAY * Math.pow(2, attempt);
@@ -233,15 +233,15 @@
         await sleep(backoff);
         return fetchWithRetry(url, options, attempt + 1);
       }
-
+ 
       if (response.status === 404) {
         throw new Error('Not found (404): ' + url);
       }
-
+ 
       if (!response.ok) {
         throw new Error('HTTP ' + response.status + ' for ' + url);
       }
-
+ 
       return response;
     } catch (err) {
       if (isAbortError(err)) throw err;
@@ -254,19 +254,19 @@
       throw err;
     }
   }
-
+ 
   async function fetchJSON(url, options = {}) {
     const response = await fetchWithRetry(url, options);
     return response.json();
   }
-
+ 
   // ============================================================
   // LOGGER MODULE
   // ============================================================
-
+ 
   const Logger = (() => {
     const listeners = [];
-
+ 
     function emit(level, msg) {
       const entry = { level, msg, time: new Date().toLocaleTimeString() };
       listeners.forEach(fn => fn(entry));
@@ -274,7 +274,7 @@
       else if (level === 'warn') console.warn('[LitDL]', msg);
       else console.log('[LitDL]', msg);
     }
-
+ 
     return {
       info: (msg) => emit('info', msg),
       warn: (msg) => emit('warn', msg),
@@ -283,11 +283,11 @@
       onLog: (fn) => listeners.push(fn),
     };
   })();
-
+ 
   // ============================================================
   // PHASE 9: PERSISTENT SETTINGS
   // ============================================================
-
+ 
   const Settings = (() => {
     const KEY = 'litdl_v2_settings';
     const FRESH_PAGE_KEYS = [
@@ -303,7 +303,7 @@
       'searchQuery',
       'lastSelection',
     ];
-
+ 
     function defaults() {
       return {
         panelOpen: true,
@@ -320,7 +320,7 @@
         lastSelection: [],
       };
     }
-
+ 
     async function load() {
       try {
         const raw = await GMCompat.getValue(KEY, null);
@@ -328,14 +328,14 @@
         return { ...defaults(), ...JSON.parse(raw) };
       } catch { return defaults(); }
     }
-
+ 
     function save(data) {
       GMCompat.setValue(KEY, JSON.stringify(data)).catch(() => { });
     }
-
+ 
     let _state = defaults();
     let _ready = false;
-
+ 
     return {
       init: async () => {
         if (_ready) return { ..._state };
@@ -360,37 +360,37 @@
       all: () => ({ ..._state }),
     };
   })();
-
+ 
   // ============================================================
   // PHASE 2: AUTHOR CATALOG RETRIEVAL + PAGINATION
   // ============================================================
-
+ 
   function detectAuthor() {
     try {
       const url = new URL(window.location.href);
       if (!ALLOWED_HOSTS.has(url.hostname.toLowerCase())) return null;
-
+ 
       const pathParts = url.pathname.split('/').filter(Boolean);
       if (pathParts[0] === 'authors' && pathParts[1]) {
         return decodeURIComponent(pathParts[1]);
       }
-
+ 
       if (url.pathname === '/stories/memberpage.php') {
         const uid = url.searchParams.get('uid');
         if (uid && /^\d+$/.test(uid)) return uid;
       }
-
+ 
       return null;
     } catch {
       return null;
     }
   }
-
+ 
   function extractStorySlug(value) {
     if (!value) return '';
     const raw = String(value).trim();
     if (!raw) return '';
-
+ 
     try {
       const url = new URL(raw, window.location.origin);
       const parts = url.pathname.split('/').filter(Boolean);
@@ -405,7 +405,7 @@
       return raw.replace(new RegExp('^/+|/+$', 'g'), '');
     }
   }
-
+ 
   function decodeSerializedField(value) {
     if (value == null) return '';
     const raw = String(value);
@@ -418,7 +418,7 @@
         .split(slash + slash).join(slash));
     }
   }
-
+ 
   function decodeEscapedSequences(value) {
     if (value == null) return '';
     const input = String(value);
@@ -426,54 +426,54 @@
       .replace(/\x([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
       .replace(/\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
   }
-
+ 
   function parsePossibleDate(value) {
     if (value == null || value === '') return null;
-
+ 
     if (value instanceof Date) {
       return Number.isNaN(value.getTime()) ? null : new Date(value.getTime());
     }
-
+ 
     if (typeof value === 'number' && Number.isFinite(value)) {
       const ms = value > 1e12 ? value : value * 1000;
       const date = new Date(ms);
       return Number.isNaN(date.getTime()) ? null : date;
     }
-
+ 
     const raw = String(value).trim();
     if (!raw) return null;
-
+ 
     if (/^d+$/.test(raw)) {
       const numeric = parseInt(raw, 10);
       return parsePossibleDate(numeric);
     }
-
+ 
     const parsed = new Date(raw);
     if (!Number.isNaN(parsed.getTime())) {
       return parsed;
     }
-
+ 
     return null;
   }
-
+ 
   function formatDateISO(value) {
     const parsed = parsePossibleDate(value);
     return parsed ? parsed.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
   }
-
+ 
   function formatDateDisplay(value) {
     const parsed = parsePossibleDate(value);
     if (parsed) return parsed.toLocaleDateString();
     return value == null ? '' : String(value);
   }
-
+ 
   function cleanStoryTitle(value) {
     return normalizeStoryMarkup(value == null ? '' : String(value)).trim();
   }
-
+ 
   function normalizeStoryMarkup(value) {
     if (value == null) return '';
-
+ 
     const newline = String.fromCharCode(10);
     const carriageReturn = String.fromCharCode(13);
     const slash = String.fromCharCode(92);
@@ -481,7 +481,7 @@
     let text = String(value)
       .split(carriageReturn + newline).join(newline)
       .split(carriageReturn).join(newline);
-
+ 
     bookmarkLabels.forEach(bookmarkLabel => {
       let lower = text.toLowerCase();
       while (lower.indexOf(bookmarkLabel) !== -1) {
@@ -490,11 +490,11 @@
         lower = text.toLowerCase();
       }
     });
-
+ 
     while (text.indexOf(slash + slash) !== -1) {
       text = text.split(slash + slash).join(newline + newline);
     }
-
+ 
     text = text
       .split(newline)
       .map(line => {
@@ -504,467 +504,22 @@
         return nextLine.trim();
       })
       .join(newline);
-
+ 
     while (text.indexOf(slash) !== -1) {
       text = text.split(slash).join('');
     }
-
+ 
     while (text.indexOf(newline + newline + newline) !== -1) {
       text = text.split(newline + newline + newline).join(newline + newline);
     }
-
+ 
     return text.trim();
   }
-
-  const StoryMarkup = (() => {
-    const BLOCK_TAGS = new Set(['article', 'aside', 'blockquote', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'footer', 'hr', 'li', 'main', 'nav', 'ol', 'p', 'pre', 'section', 'table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th', 'ul']);
-    const ALLOWED_TAGS = new Set(['a', 'article', 'blockquote', 'br', 'code', 'div', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'li', 'ol', 'p', 'pre', 'span', 'strong', 'sub', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'tfoot', 'tr', 'u', 'ul']);
-    const PREFERRED_CONTENT_SELECTORS = [
-      '[itemprop="articleBody"] [class*="introduction__text"]',
-      '[itemprop="articleBody"] [class*="introduction-wrap"]',
-      '[itemprop="articleBody"] [class*="introduction"]',
-      '[itemprop="articleBody"]',
-      '[class*="article__content"] [class*="introduction__text"]',
-      '[class*="article__content"] [class*="introduction-wrap"]',
-      '[class*="article__content"]',
-      '.story-content',
-      '[class*="story-content"]',
-      '.aa_ht',
-      '[class*="aa_ht"]',
-      '[class*="story_body"]',
-      '[class*="story-body"]',
-      '[class*="article-content"]',
-      '[class*="article-body"]',
-    ];
-    const CONTENT_SELECTORS = [
-      '[itemprop="articleBody"] [class*="introduction__text"]',
-      '[itemprop="articleBody"] [class*="introduction-wrap"]',
-      '[itemprop="articleBody"] [class*="introduction"]',
-      '[itemprop="articleBody"]',
-      '[class*="article__content"] [class*="introduction__text"]',
-      '[class*="article__content"] [class*="introduction-wrap"]',
-      '[class*="article__content"]',
-      '.aa_ht',
-      '[class*="aa_ht"]',
-      '[data-testid*="story"]',
-      '[data-test*="story"]',
-      '[class*="story-content"]',
-      '[class*="story_body"]',
-      '[class*="story-body"]',
-      '[class*="article-content"]',
-      '[class*="article-body"]',
-      '[class*="tabpanel"]',
-      'article',
-      'main',
-    ];
-    const NOISE_CLASS_PATTERN = /(ad-|ads|banner|bookmark|comment|cta|favorite|footer|header|nav|pager|pagination|promo|rating|report|share|social|toolbar)/i;
-    const SAFE_URI_PATTERN = /^(https?:|mailto:|\/|#)/i;
-
-    function escapeText(value) {
-      return String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-    }
-
-    function escapeAttr(value) {
-      return escapeText(value)
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
-
-    function normalizeSourceText(value) {
-      return String(value || '')
-        .replace(/\r\n/g, '\n')
-        .replace(/\r/g, '\n')
-        .replace(/\u00a0/g, ' ');
-    }
-
-    function isLikelyMarkup(value) {
-      return /<\s*(a|article|blockquote|br|div|em|h[1-6]|hr|i|li|ol|p|pre|section|span|strong|table|tbody|td|th|thead|tfoot|tr|u|ul)\b/i.test(String(value || ''));
-    }
-
-    function stripNoiseLines(value) {
-      return normalizeSourceText(value)
-        .split('\n')
-        .filter(line => !/^\s*(bookmark|report|share|favorite|follow)\s+story\s*$/i.test(line))
-        .join('\n')
-        .trim();
-    }
-
-    function plainTextToHtml(text) {
-      const cleaned = stripNoiseLines(text);
-      if (!cleaned) return '';
-
-      return cleaned
-        .split(/\n{2,}/)
-        .map(block => block.trim())
-        .filter(Boolean)
-        .map(block => '<p>' + escapeText(block).replace(/\n/g, '<br>') + '</p>')
-        .join('');
-    }
-
-    function isNoiseElement(node) {
-      if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
-      const tag = node.tagName.toLowerCase();
-      if (['script', 'style', 'noscript', 'iframe', 'button', 'form', 'svg', 'canvas'].includes(tag)) return true;
-      const marker = [node.id || '', node.className || '', node.getAttribute('role') || '', node.getAttribute('aria-label') || ''].join(' ');
-      return NOISE_CLASS_PATTERN.test(marker);
-    }
-
-    function normalizeAnchorHref(href) {
-      const value = String(href || '').trim();
-      if (!value || !SAFE_URI_PATTERN.test(value) || /^javascript:/i.test(value)) return '';
-      if (value.startsWith('/')) {
-        try {
-          return new URL(value, window.location.origin).toString();
-        } catch {
-          return value;
-        }
-      }
-      return value;
-    }
-
-    function sanitizeNode(node, doc) {
-      if (!node) return null;
-
-      if (node.nodeType === Node.TEXT_NODE) {
-        const value = normalizeSourceText(node.nodeValue || '');
-        if (!value.trim()) return doc.createTextNode(value);
-        if (/^\s*(bookmark|report|share|favorite|follow)\s+story\s*$/i.test(value)) return null;
-        return doc.createTextNode(value);
-      }
-
-      if (node.nodeType !== Node.ELEMENT_NODE) return null;
-      if (isNoiseElement(node)) return null;
-
-      const tag = node.tagName.toLowerCase();
-      const mappedTag = tag === 'b' ? 'strong' : tag === 'i' ? 'em' : tag === 'section' ? 'div' : tag;
-      const shouldKeepTag = ALLOWED_TAGS.has(mappedTag);
-      const target = shouldKeepTag ? doc.createElement(mappedTag) : doc.createDocumentFragment();
-
-      if (mappedTag === 'a' && shouldKeepTag) {
-        const href = normalizeAnchorHref(node.getAttribute('href') || '');
-        if (href) {
-          target.setAttribute('href', href);
-          target.setAttribute('rel', 'noopener noreferrer');
-        }
-      }
-
-      Array.from(node.childNodes).forEach(child => {
-        const sanitizedChild = sanitizeNode(child, doc);
-        if (sanitizedChild) target.appendChild(sanitizedChild);
-      });
-
-      if (shouldKeepTag && BLOCK_TAGS.has(mappedTag) && !target.textContent.trim() && !target.querySelector('br, hr')) {
-        return null;
-      }
-
-      if (!shouldKeepTag && target.childNodes.length === 0) {
-        return null;
-      }
-
-      return target;
-    }
-
-    function sanitizeFragmentFromNode(root) {
-      if (!root) return '';
-      const doc = root.ownerDocument || document;
-      const wrapper = doc.createElement('div');
-
-      Array.from(root.childNodes).forEach(child => {
-        const sanitized = sanitizeNode(child, doc);
-        if (sanitized) wrapper.appendChild(sanitized);
-      });
-
-      return wrapper.innerHTML.trim();
-    }
-
-    function normalizeComparableText(value) {
-      return stripNoiseLines(String(value || ''))
-        .replace(/s+/g, ' ')
-        .trim()
-        .toLowerCase();
-    }
-
-    function buildReferenceExcerpt(value) {
-      const normalized = normalizeComparableText(String(value || '').replace(/<[^>]+>/g, ' '));
-      if (!normalized) return '';
-      const sentenceMatch = normalized.match(/(.{40,180}?[.!?])(?:s|$)/);
-      if (sentenceMatch && sentenceMatch[1]) return sentenceMatch[1].trim();
-      return normalized.slice(0, 160).trim();
-    }
-
-    function elementDepth(element) {
-      let depth = 0;
-      let node = element;
-      while (node && node.parentElement) {
-        depth++;
-        node = node.parentElement;
-      }
-      return depth;
-    }
-
-    function countStructuralBlocks(markup) {
-      if (!markup) return 0;
-      return (markup.match(/<(p|div|li|blockquote|pre|h[1-6])/gi) || []).length
-        + (markup.match(/<br/gi) || []).length;
-    }
-
-    function candidateScore(element, referenceExcerpt = '') {
-      if (!element || element.nodeType !== Node.ELEMENT_NODE || isNoiseElement(element)) return -1;
-      const text = stripNoiseLines(element.textContent || '');
-      if (text.length < 120) return -1;
-
-      const paragraphCount = element.querySelectorAll('p').length;
-      const divCount = element.querySelectorAll('div').length;
-      const breakCount = element.querySelectorAll('br').length;
-      const listItemCount = element.querySelectorAll('li').length;
-      const blockquoteCount = element.querySelectorAll('blockquote, pre').length;
-      const linkCount = element.querySelectorAll('a').length;
-      const buttonCount = element.querySelectorAll('button, [role="button"]').length;
-      const headingCount = element.querySelectorAll('h1, h2, h3, h4, h5, h6').length;
-      const structuralCount = paragraphCount + Math.min(divCount, 20) + listItemCount + blockquoteCount + breakCount + headingCount;
-      const marker = [element.id || '', element.className || '', element.getAttribute('role') || '', element.getAttribute('aria-label') || ''].join(' ');
-      const preferredContainer = /(story-content|aa_ht|story[_-]body|article[_-]content|article[_-]body|article__content|introduction[_-]|introduction__)/i.test(marker);
-      const tabPanelPenalty = /(tabpanel|tab-panel|tabs?)/i.test(marker) ? 3000 : 0;
-      const referenceMatch = referenceExcerpt && normalizeComparableText(text).includes(referenceExcerpt);
-      const referenceBonus = referenceMatch ? 20000 : 0;
-      const sizePenalty = referenceMatch ? Math.max(0, Math.floor(text.length / 12)) : 0;
-
-      if (structuralCount === 0 && text.length > 300) {
-        return Math.max(1, Math.floor(text.length / 20))
-          - linkCount * 20
-          - buttonCount * 250
-          - tabPanelPenalty
-          - sizePenalty
-          + (preferredContainer ? 3000 : 0)
-          + referenceBonus;
-      }
-
-      return text.length
-        + paragraphCount * 500
-        + Math.min(divCount, 20) * 80
-        + listItemCount * 140
-        + blockquoteCount * 180
-        + breakCount * 70
-        + headingCount * 120
-        - linkCount * 40
-        - buttonCount * 250
-        - tabPanelPenalty
-        - sizePenalty
-        + (preferredContainer ? 3000 : 0)
-        + referenceBonus;
-    }
-
-    function findRenderedContentRoot(doc, referenceText = '') {
-      if (!doc || !doc.body) return null;
-      const referenceExcerpt = buildReferenceExcerpt(referenceText);
-
-      const preferredSeen = new Set();
-      const preferredCandidates = [];
-      PREFERRED_CONTENT_SELECTORS.forEach((selector, index) => {
-        doc.querySelectorAll(selector).forEach(node => {
-          if (!preferredSeen.has(node)) {
-            preferredSeen.add(node);
-            preferredCandidates.push({ node, priority: PREFERRED_CONTENT_SELECTORS.length - index });
-          }
-        });
-      });
-
-      if (referenceExcerpt) {
-        const anchoredPreferred = preferredCandidates
-          .filter(entry => normalizeComparableText(entry.node.textContent || '').includes(referenceExcerpt))
-          .sort((a, b) => {
-            if (b.priority !== a.priority) return b.priority - a.priority;
-            const aText = normalizeComparableText(a.node.textContent || '');
-            const bText = normalizeComparableText(b.node.textContent || '');
-            if (aText.length !== bText.length) return aText.length - bText.length;
-            return elementDepth(b.node) - elementDepth(a.node);
-          })[0];
-        if (anchoredPreferred) {
-          return anchoredPreferred.node;
-        }
-      }
-
-      const bestPreferredMatch = preferredCandidates
-        .map(entry => ({ node: entry.node, score: candidateScore(entry.node, referenceExcerpt) + entry.priority * 2000 }))
-        .sort((a, b) => b.score - a.score)[0];
-
-      if (bestPreferredMatch && bestPreferredMatch.score > 0) {
-        return bestPreferredMatch.node;
-      }
-
-      const seen = new Set();
-      const selectorCandidates = [];
-      CONTENT_SELECTORS.forEach((selector, index) => {
-        doc.querySelectorAll(selector).forEach(node => {
-          if (!seen.has(node)) {
-            seen.add(node);
-            selectorCandidates.push({ node, priority: CONTENT_SELECTORS.length - index });
-          }
-        });
-      });
-
-      const bestSelectorMatch = selectorCandidates
-        .map(entry => ({ node: entry.node, score: candidateScore(entry.node, referenceExcerpt) + entry.priority * 1000 }))
-        .sort((a, b) => b.score - a.score)[0];
-
-      if (bestSelectorMatch && bestSelectorMatch.score > 0) {
-        return bestSelectorMatch.node;
-      }
-
-      const genericCandidates = Array.from(doc.body.querySelectorAll('article, main, section, div'))
-        .map(node => ({ node, score: candidateScore(node, referenceExcerpt) }))
-        .filter(entry => entry.score > 0)
-        .sort((a, b) => b.score - a.score);
-
-      return genericCandidates.length ? genericCandidates[0].node : null;
-    }
-
-    function sanitizeStorySource(markup) {
-      if (!markup) return '';
-      const doc = document.implementation.createHTMLDocument('story-fragment');
-      const wrapper = doc.createElement('div');
-      wrapper.innerHTML = isLikelyMarkup(markup) ? String(markup) : plainTextToHtml(markup);
-      return sanitizeFragmentFromNode(wrapper);
-    }
-
-    function scoreMarkup(markup) {
-      if (!markup) return -1;
-      const text = stripNoiseLines(String(markup).replace(/<[^>]+>/g, ' '));
-      if (text.length < 80) return text.length;
-
-      const paragraphCount = (markup.match(/<p/gi) || []).length;
-      const divCount = (markup.match(/<div/gi) || []).length;
-      const breakCount = (markup.match(/<br/gi) || []).length;
-      const listItemCount = (markup.match(/<li/gi) || []).length;
-      const blockquoteCount = (markup.match(/<(blockquote|pre)/gi) || []).length;
-      const headingCount = (markup.match(/<h[1-6]/gi) || []).length;
-      const escapedTagCount = (markup.match(/\x3C|&lt;(em|i|strong|b|p|div|br)/gi) || []).length;
-      const linkCount = (markup.match(/<a/gi) || []).length;
-
-      return text.length
-        + paragraphCount * 500
-        + Math.min(divCount, 20) * 80
-        + listItemCount * 140
-        + blockquoteCount * 180
-        + breakCount * 70
-        + headingCount * 120
-        - escapedTagCount * 1200
-        - linkCount * 30;
-    }
-
-    function choosePreferredMarkup(renderedMarkup, fallbackMarkup) {
-      const rendered = sanitizeStorySource(renderedMarkup);
-      const fallback = sanitizeStorySource(fallbackMarkup);
-      const renderedScore = scoreMarkup(rendered);
-      const fallbackScore = scoreMarkup(fallback);
-      const renderedBlocks = countStructuralBlocks(rendered);
-      const fallbackBlocks = countStructuralBlocks(fallback);
-
-      if (fallbackBlocks >= 2 && renderedBlocks <= 1 && fallbackScore > 0) {
-        return { html: fallback, source: 'embedded-pageText', renderedScore, fallbackScore };
-      }
-
-      if (fallbackScore > renderedScore + 400) {
-        return { html: fallback, source: 'embedded-pageText', renderedScore, fallbackScore };
-      }
-      if (renderedScore > 0) {
-        return { html: rendered, source: 'rendered-dom', renderedScore, fallbackScore };
-      }
-      if (fallbackScore > 0) {
-        return { html: fallback, source: 'embedded-pageText', renderedScore, fallbackScore };
-      }
-      return { html: '', source: 'missing', renderedScore, fallbackScore };
-    }
-
-    function sanitizeStoredMarkup(markup) {
-      const sanitized = sanitizeStorySource(markup);
-      return sanitized || '<p><em>[No content]</em></p>';
-    }
-
-    function extractStoryHtmlFromDocument(doc, referenceText = '') {
-      const root = findRenderedContentRoot(doc, referenceText);
-      if (!root) return '';
-      return sanitizeFragmentFromNode(root);
-    }
-
-    function serializeNodeToXHTML(node) {
-      if (!node) return '';
-      if (node.nodeType === Node.TEXT_NODE) {
-        return escapeText(node.nodeValue || '');
-      }
-      if (node.nodeType !== Node.ELEMENT_NODE) return '';
-
-      const tag = node.tagName.toLowerCase();
-      const mappedTag = tag === 'b' ? 'strong' : tag === 'i' ? 'em' : tag;
-      const finalTag = ALLOWED_TAGS.has(mappedTag) ? mappedTag : null;
-      const children = Array.from(node.childNodes).map(serializeNodeToXHTML).join('');
-
-      if (!finalTag) return children;
-
-      if (finalTag === 'br' || finalTag === 'hr') {
-        return '<' + finalTag + ' />';
-      }
-
-      const attrs = [];
-      if (finalTag === 'a') {
-        const href = normalizeAnchorHref(node.getAttribute('href') || '');
-        if (href) attrs.push(' href="' + escapeAttr(href) + '"');
-      }
-
-      return '<' + finalTag + attrs.join('') + '>' + children + '</' + finalTag + '>';
-    }
-
-    function toXHTMLFragment(markup) {
-      const sanitized = sanitizeStoredMarkup(markup);
-      const doc = document.implementation.createHTMLDocument('story-xhtml');
-      const wrapper = doc.createElement('div');
-      wrapper.innerHTML = sanitized;
-      const xhtml = Array.from(wrapper.childNodes).map(serializeNodeToXHTML).join('').trim();
-      return xhtml || '<p><em>[No content available]</em></p>';
-    }
-
-    function validateXMLDocument(markup, mimeType, label) {
-      const parsed = new DOMParser().parseFromString(markup, mimeType);
-      if (parsed.querySelector('parsererror')) {
-        throw new Error('Invalid ' + label + ' generated for EPUB.');
-      }
-    }
-
-    return {
-      extractStoryHtmlFromDocument,
-      choosePreferredMarkup,
-      sanitizeStorySource,
-      sanitizeStoredMarkup,
-      scoreMarkup,
-      toXHTMLFragment,
-      plainTextToHtml,
-      validateXMLDocument,
-    };
-  })();
-
-  function extractPageCountFromText(text) {
-    const value = String(text || '').replace(/s+/g, ' ').trim();
-    if (!value) return 0;
-
-    const compactMatch = value.match(/\b(\d+)\s*p\b/i);
-    if (compactMatch) return Math.max(1, parseInt(compactMatch[1], 10) || 0);
-
-    const compactSuffixMatch = value.match(/\b(\d+)p\b/i);
-    if (compactSuffixMatch) return Math.max(1, parseInt(compactSuffixMatch[1], 10) || 0);
-
-    const verboseMatch = value.match(/\b(\d+)\s*pages?\b/i);
-    if (verboseMatch) return Math.max(1, parseInt(verboseMatch[1], 10) || 0);
-
-    return 0;
-  }
-
+ 
   function escapeRegex(str) {
     return String(str || '').replace(new RegExp('[-/\\^$*+?.()|[\]{}]', 'g'), '\$&');
   }
-
+ 
   function extractAuthorUserIdFromHtml(html, author) {
     if (!html) return null;
     const safeAuthor = escapeRegex(author);
@@ -974,20 +529,20 @@
       new RegExp('author:\{userid:(\d+),username:"' + safeAuthor + '"', 'i'),
       new RegExp('memberpage\.php\?uid=(\d{2,})', 'i'),
     ];
-
+ 
     for (const pattern of patterns) {
       const match = html.match(pattern);
       if (match && match[1]) return match[1];
     }
-
+ 
     return null;
   }
-
+ 
   async function resolveAuthorApiIdentifier(author) {
     const normalized = String(author || '').trim();
     if (!normalized) return normalized;
     if (/^\d+$/.test(normalized)) return normalized;
-
+ 
     try {
       const url = new URL(window.location.href);
       const uid = url.searchParams.get('uid');
@@ -996,7 +551,7 @@
         return uid;
       }
     } catch { }
-
+ 
     try {
       const html = document.documentElement ? document.documentElement.innerHTML : '';
       const uid = extractAuthorUserIdFromHtml(html, normalized);
@@ -1005,7 +560,7 @@
         return uid;
       }
     } catch { }
-
+ 
     try {
       const response = await gmFetch(window.location.href, {
         headers: {
@@ -1020,10 +575,10 @@
         return uid;
       }
     } catch { }
-
+ 
     return normalized;
   }
-
+ 
   async function fetchAuthorProfile(identifier) {
     const resolved = await resolveAuthorApiIdentifier(identifier);
     const url = API_BASE + '/users/' + resolved + '?params=' + encodeURIComponent(JSON.stringify({ withProfile: false }));
@@ -1038,21 +593,21 @@
       return null;
     }
   }
-
+ 
   async function fetchCatalogForIdentifier(identifier, onProgress) {
     const PAGE_SIZE = 500;
     let page = 1;
     let allItems = [];
     let totalExpected = null;
-
+ 
     Logger.info('Fetching story catalog for: ' + identifier);
-
+ 
     while (true) {
       const params = JSON.stringify({ page, pageSize: PAGE_SIZE, type: 'story', listType: 'expanded' });
       const url = API_BASE + '/users/' + identifier + '/series_and_works?params=' + encodeURIComponent(params);
-
+ 
       Logger.info('Fetching catalog page ' + page + '...');
-
+ 
       let data;
       try {
         data = await fetchJSON(url);
@@ -1062,37 +617,37 @@
         Logger.warn('Continuing with partial catalog after page ' + page + ' failure');
         break;
       }
-
+ 
       // Handle response structure
       const items = data.submissions || data.works || data.data || data.stories || [];
       if (items.length === 0) break;
-
+ 
       if (totalExpected === null && data.total !== undefined) {
         totalExpected = data.total;
       }
-
+ 
       allItems = allItems.concat(items);
-
+ 
       if (onProgress) onProgress(allItems.length, totalExpected);
-
+ 
       Logger.info('Fetched ' + allItems.length + (totalExpected ? ' of ' + totalExpected : '') + ' entries');
-
+ 
       // Check if we have more pages
       const hasMore = data.hasNextPage || data.has_more || (totalExpected && allItems.length < totalExpected) || items.length === PAGE_SIZE;
       if (!hasMore || items.length < PAGE_SIZE) break;
-
+ 
       page++;
     }
-
+ 
     Logger.success('Catalog complete: ' + allItems.length + ' entries fetched');
     return allItems;
   }
-
+ 
   async function fetchAuthorCatalog(identifier, onProgress) {
     const resolved = await resolveAuthorApiIdentifier(identifier);
     return fetchCatalogForIdentifier(resolved, onProgress);
   }
-
+ 
   function titleFromCategorySlug(slug) {
     if (!slug) return 'Unknown';
     return String(slug)
@@ -1101,19 +656,16 @@
       .map(part => part.charAt(0).toUpperCase() + part.slice(1))
       .join(' ');
   }
-
+ 
   function buildAuthorWorksUrl(author, mode) {
     const safeAuthor = encodeURIComponent(String(author || '').trim());
     const base = window.location.origin + '/authors/' + safeAuthor + '/works/stories';
     if (mode === 'all') return base + '/all';
     return base;
   }
-
+ 
   function buildCatalogItem(overrides = {}) {
     const dateValue = overrides.date || '';
-    const parsedPageCount = overrides.pageCount === undefined || overrides.pageCount === null || overrides.pageCount === ''
-      ? 0
-      : Math.max(0, parseInt(overrides.pageCount, 10) || 0);
     return {
       id: overrides.id || overrides.slug || overrides.url || '',
       slug: overrides.slug || overrides.url || overrides.id || '',
@@ -1127,7 +679,7 @@
       views: parseInt(overrides.views || 0, 10) || 0,
       date: dateValue,
       dateFormatted: overrides.dateFormatted || formatDateDisplay(dateValue),
-      pageCount: parsedPageCount,
+      pageCount: parseInt(overrides.pageCount || 1, 10) || 1,
       seriesId: overrides.seriesId || null,
       seriesTitle: overrides.seriesTitle || null,
       seriesIndex: parseInt(overrides.seriesIndex || 0, 10) || 0,
@@ -1140,7 +692,7 @@
       commentCount: parseInt(overrides.commentCount || 0, 10) || 0,
     };
   }
-
+ 
   function extractCatalogFromDocument(doc, author) {
     const items = [];
     const seen = new Set();
@@ -1149,17 +701,17 @@
       || author;
     const truncatedSeries = [];
     const seenSeriesUrls = new Set();
-
+ 
     const cards = Array.from(doc.querySelectorAll('[role="article"]'));
     cards.forEach(card => {
       const link = card.querySelector('a[href*="/s/"]');
       if (!link) return;
-
+ 
       const slug = extractStorySlug(link.getAttribute('href') || link.href || '');
       const title = (link.textContent || '').trim();
       if (!slug || !title || seen.has(slug)) return;
       seen.add(slug);
-
+ 
       const description = (card.querySelector('p')?.textContent || '').trim();
       const categoryLink = card.querySelector('a[href*="/c/"], a[href*="/categories/"]');
       const categoryHref = categoryLink?.getAttribute('href') || categoryLink?.href || '';
@@ -1168,8 +720,7 @@
       const text = card.textContent || '';
       const dateMatch = text.match(/\b\d{1,2}\/\d{1,2}\/\d{4}\b/);
       const ratingMatch = text.match(/\b([0-4]\.\d{1,2}|5(?:\.0{1,2})?)\b/);
-      const pageCount = extractPageCountFromText(text);
-
+ 
       items.push(buildCatalogItem({
         id: slug,
         slug,
@@ -1183,7 +734,7 @@
         views: 0,
         date: dateMatch ? dateMatch[0] : '',
         dateFormatted: dateMatch ? dateMatch[0] : '',
-        pageCount,
+        pageCount: 1,
         seriesId: null,
         seriesTitle: null,
         seriesIndex: 0,
@@ -1195,13 +746,13 @@
         hot: false,
       }));
     });
-
+ 
     const truncatedButtons = Array.from(doc.querySelectorAll('button'));
     truncatedButtons.forEach(button => {
       const label = normalizeStoryMarkup(button.textContent || '').replace(/s+/g, ' ').trim();
       const match = label.match(/^View Fulls+(d+)s+Part Series$/i);
       if (!match) return;
-
+ 
       const container = button.closest('div');
       const candidateRoots = [
         button.parentElement,
@@ -1216,7 +767,7 @@
         if (seriesLink) break;
       }
       if (!seriesLink) return;
-
+ 
       const seriesUrl = seriesLink.getAttribute('href') || seriesLink.href || '';
       const absoluteSeriesUrl = (() => {
         try {
@@ -1227,7 +778,7 @@
       })();
       if (!absoluteSeriesUrl || seenSeriesUrls.has(absoluteSeriesUrl)) return;
       seenSeriesUrls.add(absoluteSeriesUrl);
-
+ 
       const seriesTitle = cleanStoryTitle(seriesLink.textContent || 'Series');
       truncatedSeries.push({
         id: absoluteSeriesUrl,
@@ -1236,13 +787,13 @@
         expectedParts: parseInt(match[1], 10) || 0,
       });
     });
-
+ 
     return { authorName, items, truncatedSeries };
   }
-
+ 
   function extractTruncatedSeriesFromHtml(html) {
     if (!html) return [];
-
+ 
     const results = [];
     const seen = new Set();
     const slash = String.fromCharCode(92);
@@ -1251,20 +802,20 @@
       'g'
     );
     let match;
-
+ 
     while ((match = pattern.exec(html)) !== null) {
       const parts = parseInt(match[1], 10) || 0;
       const rawUrl = decodeSerializedField(match[2]).trim();
       const title = cleanStoryTitle(decodeSerializedField(match[3]).trim() || 'Series');
       if (!rawUrl || !title) continue;
-
+ 
       let absoluteUrl = rawUrl;
       try {
         absoluteUrl = new URL(rawUrl, window.location.origin).toString();
       } catch { }
       if (seen.has(absoluteUrl)) continue;
       seen.add(absoluteUrl);
-
+ 
       results.push({
         id: absoluteUrl,
         url: absoluteUrl,
@@ -1272,51 +823,51 @@
         expectedParts: parts,
       });
     }
-
+ 
     return results;
   }
-
+ 
   function extractAuthorStoryTotal(doc) {
     if (!doc || typeof doc.querySelectorAll !== 'function') return 0;
-
+ 
     const links = Array.from(doc.querySelectorAll('a[href*="/authors/"][href*="/works/stories"], a[title="Stories"]'));
     for (const link of links) {
       const label = (link.textContent || '').trim();
       if (!/stories/i.test(label)) continue;
-
+ 
       const countEl = link.querySelector('span');
       const countText = (countEl?.textContent || label).replace(/[^0-9]/g, '');
       if (countText) return parseInt(countText, 10);
     }
-
+ 
     const wrappers = Array.from(doc.querySelectorAll('a, div, section'));
     for (const el of wrappers) {
       const text = (el.textContent || '').replace(/s+/g, ' ').trim();
       const match = text.match(/(d{1,5})s+Stories/i);
       if (match) return parseInt(match[1], 10);
     }
-
+ 
     return 0;
   }
-
+ 
   function extractCatalogFromEmbeddedData(html, author, authorName) {
     if (!html) {
       return { authorName: authorName || author, items: [] };
     }
-
+ 
     const itemsBySlug = new Map();
     const recordRegex = /title:"([^"]+)",type:"story",url:"([^"]+)"/g;
     let match;
-
+ 
     while ((match = recordRegex.exec(html)) !== null) {
       const title = cleanStoryTitle(decodeSerializedField(match[1]).trim());
       const slug = decodeSerializedField(match[2]).trim();
       if (!slug || !title || itemsBySlug.has(slug)) continue;
-
+ 
       const start = Math.max(0, match.index - 2400);
       const end = Math.min(html.length, match.index + 2400);
       const snippet = html.slice(start, end);
-
+ 
       const idMatch = snippet.match(/id:(d+)/);
       const descriptionMatch = snippet.match(/description:"([^"]*)"/);
       const categorySlugMatch = snippet.match(/pageUrl:"([^"]+)"/);
@@ -1325,8 +876,7 @@
       const viewsMatch = snippet.match(/view_count:(d+)/);
       const commentsMatch = snippet.match(/comment_count:(d+)/);
       const wordsMatch = snippet.match(/words_count:(d+)/);
-      const pageCountMatch = snippet.match(/["']?(?:meta_pages|page_count|pages)["']?\s*:\s*(\d+)/);
-
+ 
       const categorySlug = categorySlugMatch ? decodeSerializedField(categorySlugMatch[1]).trim() : '';
       itemsBySlug.set(slug, buildCatalogItem({
         id: idMatch ? idMatch[1] : slug,
@@ -1341,7 +891,7 @@
         views: viewsMatch ? parseInt(viewsMatch[1], 10) : 0,
         date: dateMatch ? decodeSerializedField(dateMatch[1]).trim() : '',
         dateFormatted: dateMatch ? decodeSerializedField(dateMatch[1]).trim() : '',
-        pageCount: pageCountMatch ? parseInt(pageCountMatch[1], 10) : 0,
+        pageCount: 1,
         seriesId: null,
         seriesTitle: null,
         seriesIndex: 0,
@@ -1354,13 +904,13 @@
         commentCount: commentsMatch ? parseInt(commentsMatch[1], 10) : 0,
       }));
     }
-
+ 
     return {
       authorName: authorName || author,
       items: Array.from(itemsBySlug.values()),
     };
   }
-
+ 
   function mergeCatalogItems() {
     const merged = new Map();
     for (const list of arguments) {
@@ -1369,12 +919,12 @@
         const normalized = normalizeStory(item);
         const slug = normalized.slug || normalized.id;
         if (!slug) return;
-
+ 
         if (!merged.has(slug)) {
           merged.set(slug, normalized);
           return;
         }
-
+ 
         const current = merged.get(slug);
         merged.set(slug, {
           ...current,
@@ -1387,7 +937,7 @@
           views: normalized.views || current.views,
           date: normalized.date || current.date,
           dateFormatted: normalized.dateFormatted || current.dateFormatted,
-          pageCount: Math.max(normalized.pageCount || 0, current.pageCount || 0),
+          pageCount: normalized.pageCount || current.pageCount,
           seriesId: normalized.seriesId || current.seriesId,
           seriesTitle: normalized.seriesTitle || current.seriesTitle,
           seriesIndex: normalized.seriesIndex || current.seriesIndex,
@@ -1401,12 +951,12 @@
     }
     return Array.from(merged.values());
   }
-
+ 
   function dedupeCatalogByTitle(items, author) {
     const storyItems = Array.isArray(items) ? items.slice() : [];
     const groupedByTitle = new Map();
     const normalizedAuthor = String(author || '').trim().toLowerCase();
-
+ 
     storyItems.forEach(item => {
       const normalized = normalizeStory(item);
       const titleKey = cleanStoryTitle(normalized.title || '').toLowerCase();
@@ -1414,14 +964,14 @@
       if (!groupedByTitle.has(titleKey)) groupedByTitle.set(titleKey, []);
       groupedByTitle.get(titleKey).push(normalized);
     });
-
+ 
     const keepBySlug = new Set();
     storyItems.forEach(item => {
       const normalized = normalizeStory(item);
       const slug = normalized.slug || normalized.id;
       if (slug) keepBySlug.add(slug);
     });
-
+ 
     groupedByTitle.forEach(group => {
       if (group.length < 2) return;
       const exactAuthorMatches = group.filter(entry => {
@@ -1443,14 +993,14 @@
         }
       });
     });
-
+ 
     return storyItems.filter(item => {
       const normalized = normalizeStory(item);
       const slug = normalized.slug || normalized.id;
       return slug && keepBySlug.has(slug);
     });
   }
-
+ 
   async function fetchTruncatedSeriesItems(seriesRef, author) {
     const response = await gmFetch(seriesRef.url, {
       headers: {
@@ -1469,13 +1019,13 @@
     const seen = new Set();
     const items = [];
     const links = Array.from(doc.querySelectorAll('a[href*="/s/"]'));
-
+ 
     links.forEach((link, index) => {
       const slug = extractStorySlug(link.getAttribute('href') || link.href || '');
       const title = cleanStoryTitle(link.textContent || '');
       if (!slug || !title || seen.has(slug)) return;
       seen.add(slug);
-
+ 
       const card = link.closest('[role="article"], [class*="series_parts__item"], [class*="works_item"]');
       const description = normalizeStoryMarkup(card?.querySelector('p')?.textContent || '');
       const categoryLink = card?.querySelector('a[href*="/c/"], a[href*="/categories/"]');
@@ -1485,8 +1035,7 @@
       const cardText = card?.textContent || '';
       const dateMatch = cardText.match(/\b\d{1,2}\/\d{1,2}\/\d{4}\b/);
       const ratingMatch = cardText.match(/\b([0-4]\.\d{1,2}|5(?:\.0{1,2})?)\b/);
-      const pageCount = extractPageCountFromText(cardText);
-
+ 
       items.push(buildCatalogItem({
         id: slug,
         slug,
@@ -1498,7 +1047,7 @@
         rating: ratingMatch ? parseFloat(ratingMatch[1]) : 0,
         date: dateMatch ? dateMatch[0] : '',
         dateFormatted: dateMatch ? dateMatch[0] : '',
-        pageCount,
+        pageCount: 1,
         seriesId: seriesRef.id,
         seriesTitle,
         seriesIndex: index + 1,
@@ -1506,17 +1055,17 @@
         authorName,
       }));
     });
-
+ 
     return items;
   }
-
+ 
   async function fetchCatalogFromCurrentPage(author, onProgress) {
     let parsed = extractCatalogFromDocument(document, author);
     const currentPageTotal = extractAuthorStoryTotal(document);
     if (parsed.items.length > 0 && onProgress) {
       onProgress(parsed.items.length, currentPageTotal || parsed.items.length);
     }
-
+ 
     Logger.info('Fetching full author listing from /all page...');
     const response = await gmFetch(buildAuthorWorksUrl(author, 'all'), {
       headers: {
@@ -1530,30 +1079,27 @@
     const allPageTotal = extractAuthorStoryTotal(doc);
     const worksPageTotal = Math.max(currentPageTotal, allPageTotal);
     const visibleCount = parsed.items.length;
-
+ 
     if (currentPageTotal > 0 || allPageTotal > 0) {
       Logger.info('Works page story total: current page=' + currentPageTotal + ', full listing=' + allPageTotal + '.');
     }
     Logger.info('Visible listing parsed ' + visibleCount + ' stories from the /all page.');
-
+ 
     let mergedItems = parsed.items.slice();
     let embeddedCount = visibleCount;
-    const shouldInspectEmbedded = worksPageTotal > 0 && visibleCount < worksPageTotal;
-    if (shouldInspectEmbedded) {
+    if (worksPageTotal > 0 && visibleCount < worksPageTotal) {
       Logger.warn('Visible listing is short of the works-page total. Inspecting embedded list data...');
-    }
-    const embeddedParsed = extractCatalogFromEmbeddedData(html, author, parsed.authorName);
-    embeddedCount = embeddedParsed.items.length;
-    if (embeddedCount > 0) {
+      const embeddedParsed = extractCatalogFromEmbeddedData(html, author, parsed.authorName);
+      embeddedCount = embeddedParsed.items.length;
       Logger.info('Embedded list data yielded ' + embeddedCount + ' unique stories.');
-      if (worksPageTotal > 0 && embeddedCount === worksPageTotal) {
+      if (embeddedCount === worksPageTotal) {
         Logger.info('Embedded list data already matches the works-page total. Using it as the authoritative base list.');
         mergedItems = embeddedParsed.items.slice();
       } else {
         mergedItems = mergeCatalogItems(parsed.items, embeddedParsed.items);
       }
     }
-
+ 
     let recoveredFromSeries = 0;
     const domTruncatedSeries = parsed.truncatedSeries || [];
     const htmlTruncatedSeries = extractTruncatedSeriesFromHtml(html);
@@ -1587,7 +1133,7 @@
         }
       }
     }
-
+ 
     if (worksPageTotal > 0 && mergedItems.length > worksPageTotal) {
       const dedupedByTitle = dedupeCatalogByTitle(mergedItems, author);
       if (dedupedByTitle.length < mergedItems.length) {
@@ -1595,13 +1141,13 @@
         mergedItems = dedupedByTitle;
       }
     }
-
+ 
     const finalCount = mergedItems.length;
     Logger.info('Final merged catalog count: ' + finalCount + ' stories.');
     if (worksPageTotal > 0 && finalCount !== worksPageTotal) {
       Logger.warn('Catalog still differs from works-page total: page reports ' + worksPageTotal + ', parser recovered ' + finalCount + '.');
     }
-
+ 
     if (onProgress && finalCount > 0) {
       onProgress(finalCount, worksPageTotal || finalCount, 'Catalog ready: ' + finalCount + (worksPageTotal ? ' of ' + worksPageTotal : '') + ' stories');
     }
@@ -1620,11 +1166,11 @@
       },
     };
   }
-
+ 
   // ============================================================
   // PHASE 3: SERIES GROUPING LOGIC
   // ============================================================
-
+ 
   function normalizeStory(raw) {
     // Handle both flat stories and series entries
     const story = {
@@ -1639,9 +1185,7 @@
       views: parseInt(raw.view_count || raw.views || raw.totalPageViews || 0, 10),
       date: raw.date_approve || raw.publishDate || raw.date || '',
       dateFormatted: formatDateDisplay(raw.date_approve || raw.publishDate || raw.date || ''),
-      pageCount: raw.meta_pages !== undefined || raw.pages !== undefined || raw.page_count !== undefined
-        ? Math.max(0, parseInt(raw.meta_pages || raw.pages || raw.page_count, 10) || 0)
-        : 0,
+      pageCount: parseInt(raw.meta_pages || raw.pages || raw.page_count || 1, 10),
       seriesId: raw.series?.id || raw.seriesId || null,
       seriesTitle: raw.series?.title || raw.seriesTitle || null,
       seriesIndex: parseInt(raw.series_number || raw.chapterIndex || raw.series_index || 0, 10),
@@ -1652,22 +1196,22 @@
       wordCount: parseInt(raw.words || raw.word_count || 0, 10),
       hot: raw.rate_view_hot || raw.hot || false,
     };
-
+ 
     // If this is a series container, normalize its chapters
     if (story.isSeries && story.chapters) {
       story.chapters = story.chapters.map((ch, i) => normalizeStory({ ...ch, series: { id: story.id, title: story.title }, seriesIndex: i + 1 }));
     }
-
+ 
     return story;
   }
-
+ 
   function groupStories(rawItems) {
     const standalones = [];
     const seriesMap = new Map();
-
+ 
     rawItems.forEach(raw => {
       const story = normalizeStory(raw);
-
+ 
       if (story.isSeries && story.chapters && story.chapters.length > 0) {
         // This is a series parent
         const series = {
@@ -1715,55 +1259,55 @@
         standalones.push(story);
       }
     });
-
+ 
     // Sort series chapters
     seriesMap.forEach(series => {
       series.chapters.sort((a, b) => a.seriesIndex - b.seriesIndex);
     });
-
+ 
     return {
       standalones: standalones.sort((a, b) => (b.date || '') > (a.date || '') ? 1 : -1),
       series: Array.from(seriesMap.values()).sort((a, b) => (b.date || '') > (a.date || '') ? 1 : -1),
     };
   }
-
+ 
   // ============================================================
   // PHASE 5: STORY CONTENT FETCHING
   // ============================================================
-
+ 
   async function fetchStoryContent(story, signal) {
     const slug = story.slug;
     const pages = [];
     let totalPages = story.pageCount || 1;
     let successfulPages = 0;
-
+ 
     function buildStoryPageUrl(pageNum) {
       const base = window.location.origin + '/s/' + slug;
       return pageNum > 1 ? base + '?page=' + pageNum : base;
     }
-
+ 
     function decodeEmbeddedString(value) {
       if (!value) return '';
       try {
-        return decodeEscapedSequences(JSON.parse('"' + value + '"'));
+        return normalizeStoryMarkup(decodeEscapedSequences(JSON.parse('"' + value + '"')));
       } catch {
         const slash = String.fromCharCode(92);
         const newline = String.fromCharCode(10);
-        return decodeEscapedSequences(value
+        return normalizeStoryMarkup(decodeEscapedSequences(value
           .split(slash + 'r' + slash + 'n').join(newline)
           .split(slash + 'n').join(newline)
           .split(slash + '"').join('"')
-          .split(slash + slash).join(slash));
+          .split(slash + slash).join(slash)));
       }
     }
-
+ 
     function extractPagePayload(html, pageNum) {
       const doc = new DOMParser().parseFromString(html, 'text/html');
       const pageTextMarker = 'pageText:"';
       const pageTextStart = html.indexOf(pageTextMarker);
       let pageTextValue = '';
       const slash = String.fromCharCode(92);
-
+ 
       if (pageTextStart !== -1) {
         let idx = pageTextStart + pageTextMarker.length;
         while (idx < html.length) {
@@ -1778,11 +1322,11 @@
           idx++;
         }
       }
-
+ 
       const title = cleanStoryTitle(doc.querySelector('meta[property="og:title"]')?.getAttribute('content')
         || doc.title
         || story.title);
-
+ 
       const pageLinks = Array.from(doc.querySelectorAll('a[href*="?page="]'))
         .map(link => {
           const href = link.getAttribute('href') || link.href || '';
@@ -1790,28 +1334,22 @@
           return match ? parseInt(match[1], 10) : 0;
         })
         .filter(Boolean);
-
+ 
       const detectedTotalPages = pageLinks.length ? Math.max(pageNum, ...pageLinks) : 1;
-      const decodedPageText = pageTextValue ? decodeEmbeddedString(pageTextValue) : '';
-      const renderedHtml = StoryMarkup.extractStoryHtmlFromDocument(doc, decodedPageText);
-      const preferredMarkup = StoryMarkup.choosePreferredMarkup(renderedHtml, decodedPageText);
-
+ 
       return {
-        html: preferredMarkup.html,
+        text: pageTextValue ? decodeEmbeddedString(pageTextValue) : '',
         title,
         totalPages: detectedTotalPages,
-        source: preferredMarkup.source,
-        renderedScore: preferredMarkup.renderedScore,
-        fallbackScore: preferredMarkup.fallbackScore,
       };
     }
-
+ 
     for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
       throwIfAborted(signal);
       const url = buildStoryPageUrl(pageNum);
-
+ 
       Logger.info('Fetching: ' + story.title + ' (page ' + pageNum + '/' + totalPages + ')');
-
+ 
       try {
         const response = await gmFetch(url, {
           headers: {
@@ -1820,34 +1358,30 @@
           timeout: 30000,
           signal,
         });
-
+ 
         if (response.status === 404) {
           throw new Error('Not found (404): ' + url);
         }
         if (!response.ok) {
           throw new Error('HTTP ' + response.status + ' for ' + url);
         }
-
+ 
         const html = await response.text();
         throwIfAborted(signal);
         const payload = extractPagePayload(html, pageNum);
-        if (!payload.html) {
-          throw new Error('No story content found in story HTML: ' + url);
+        if (!payload.text) {
+          throw new Error('No pageText found in story HTML: ' + url);
         }
-        if (payload.source !== 'rendered-dom') {
-          Logger.warn('Falling back to embedded story markup for ' + story.title + ' page ' + pageNum + ' (rendered score ' + payload.renderedScore + ', fallback score ' + payload.fallbackScore + ').');
-        }
-
+ 
         if (pageNum === 1) {
           totalPages = payload.totalPages || story.pageCount || 1;
         }
-
+ 
         successfulPages++;
         pages.push({
           pageNum,
-          text: payload.html,
+          text: payload.text,
           title: cleanStoryTitle(payload.title || (totalPages > 1 ? 'Page ' + pageNum : story.title)),
-          source: payload.source,
         });
       } catch (err) {
         if (isAbortError(err)) throw err;
@@ -1855,25 +1389,25 @@
         if (pageNum === 1) {
           throw err;
         }
-        pages.push({ pageNum, text: '<p><em>[Error fetching this page: ' + HTMLBuilder.escapeHtml(err.message) + ']</em></p>', title: 'Page ' + pageNum });
+        pages.push({ pageNum, text: '[Error fetching this page: ' + err.message + ']', title: 'Page ' + pageNum });
       }
     }
-
+ 
     if (successfulPages === 0) {
       throw new Error('No story pages could be fetched for "' + story.title + '"');
     }
-
+ 
     return {
       ...story,
       pages,
       totalPages,
     };
   }
-
+ 
   function buildExportGroups(downloadedStories) {
     const groups = [];
     const seriesMap = new Map();
-
+ 
     downloadedStories.forEach(story => {
       if (story.seriesId) {
         if (!seriesMap.has(story.seriesId)) {
@@ -1892,7 +1426,7 @@
             stories: [],
           });
         }
-
+ 
         const group = seriesMap.get(story.seriesId);
         group.stories.push(story);
         if (story.rating > group.rating) group.rating = story.rating;
@@ -1914,15 +1448,15 @@
         });
       }
     });
-
+ 
     seriesMap.forEach(group => {
       group.stories.sort((a, b) => (a.seriesIndex || 0) - (b.seriesIndex || 0));
       groups.push(group);
     });
-
+ 
     return groups.sort((a, b) => (b.date || '') > (a.date || '') ? 1 : -1);
   }
-
+ 
   function buildSelectedCollectionGroup(author, authorName, downloadedStories) {
     const sortedStories = downloadedStories.slice().sort((a, b) => {
       if (a.seriesId && b.seriesId && a.seriesId === b.seriesId) {
@@ -1930,7 +1464,7 @@
       }
       return (b.date || '') > (a.date || '') ? 1 : -1;
     });
-
+ 
     const lead = sortedStories[0] || {};
     return {
       id: 'selected-collection',
@@ -1947,19 +1481,19 @@
       stories: sortedStories,
     };
   }
-
+ 
   // ============================================================
   // PHASE 6: HTML BUILDER
   // ============================================================
-
+ 
   const HTMLBuilder = (() => {
     const studioUrl = 'https://studios.easyspace.in';
     const studioName = 'Easy Space Studios';
-
+ 
     function getDownloadedDate() {
       return new Date().toLocaleDateString();
     }
-
+ 
     function buildFooterPlainText() {
       return 'Downloaded with Literotica Downloader • '
         + getDownloadedDate()
@@ -1968,7 +1502,7 @@
         + ' @ '
         + studioUrl;
     }
-
+ 
     function buildDownloadFooter() {
       return '<footer class="download-footer">Downloaded with Literotica Downloader • '
         + escapeHtml(getDownloadedDate())
@@ -1978,7 +1512,7 @@
         + studioName
         + '</a></footer>';
     }
-
+ 
     function buildDownloadFooterXHTML() {
       return '<p class="download-footer">Downloaded with Literotica Downloader &#8226; '
         + escapeHtml(getDownloadedDate())
@@ -1988,7 +1522,7 @@
         + studioName
         + '</a></p>';
     }
-
+ 
     function sanitizeFilename(str) {
       return str
         .replace(/[<>:"/\\|?*]/g, '')
@@ -1997,12 +1531,12 @@
         .trim()
         .substring(0, 100);
     }
-
+ 
     function formatRating(rating) {
       if (!rating || rating === 0) return 'Not rated';
       return rating.toFixed(2) + ' / 5.00';
     }
-
+ 
     function escapeHtml(str) {
       if (!str) return '';
       return str
@@ -2012,11 +1546,19 @@
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
     }
-
+ 
     function processPageText(text) {
-      return StoryMarkup.sanitizeStoredMarkup(text);
+      if (!text) return '<p><em>[No content]</em></p>';
+      // The API returns HTML content in pageText
+      // Sanitize but preserve paragraph structure
+      return text
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/on\w+="[^"]*"/gi, '')
+        .replace(/on\w+='[^']*'/gi, '')
+        || '<p>' + escapeHtml(text) + '</p>';
     }
-
+ 
     function storyFilename(storyData) {
       if (storyData.seriesId) {
         const seriesTitle = storyData.seriesTitle || 'Series';
@@ -2025,77 +1567,55 @@
       }
       return sanitizeFilename(storyData.title);
     }
-
+ 
     function groupFilename(group) {
       return sanitizeFilename(group.title || 'collection');
     }
-
+ 
     function readingCSS() {
       return `
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        :root {
-          color-scheme: light;
-          --reader-bg: #f4efe7;
-          --reader-paper: #fffdf8;
-          --reader-ink: #1b1712;
-          --reader-muted: #6d6254;
-          --reader-accent: #8b1538;
-          --reader-rule: #ddd2c2;
-        }
         body {
           font-family: Georgia, 'Times New Roman', serif;
-          font-size: 1.05rem;
-          line-height: 1.82;
-          color: var(--reader-ink);
-          background: var(--reader-bg);
-          margin: 0;
-          padding: 0;
-          -webkit-text-size-adjust: 100%;
-        }
-        .reader-shell {
-          width: 100%;
-          max-width: 44rem;
+          font-size: 1.1rem;
+          line-height: 1.8;
+          color: #1a1a1a;
+          background: #fafaf8;
+          max-width: 760px;
           margin: 0 auto;
-          min-height: 100vh;
-          padding: 1rem 0.9rem 2.5rem;
-        }
-        .reader-paper {
-          background: var(--reader-paper);
-          border-radius: 18px;
-          padding: 1.2rem 1rem 1.6rem;
-          box-shadow: 0 12px 32px rgba(42, 30, 12, 0.08);
+          padding: 2rem 1.5rem 4rem;
         }
         .story-section + .story-section,
         .story-separator {
-          margin-top: 2.25rem;
+          margin-top: 3rem;
         }
         .story-separator {
-          border-top: 1px solid var(--reader-rule);
-          padding-top: 1.5rem;
+          border-top: 2px solid #ddd7cf;
+          padding-top: 2rem;
         }
         .story-kicker {
           font-family: system-ui, sans-serif;
-          font-size: 0.74rem;
+          font-size: 0.8rem;
           letter-spacing: 0.08em;
           text-transform: uppercase;
-          color: var(--reader-muted);
-          margin-bottom: 0.65rem;
+          color: #6c6257;
+          margin-bottom: 0.75rem;
         }
         .story-title {
-          font-size: clamp(1.55rem, 5vw, 2rem);
+          font-size: 1.9rem;
           line-height: 1.3;
-          color: var(--reader-ink);
-          margin-bottom: 1.15rem;
+          color: #121212;
+          margin-bottom: 1.5rem;
         }
         .story-section h2.story-title {
-          font-size: clamp(1.3rem, 4.2vw, 1.65rem);
+          font-size: 1.45rem;
         }
         .page-separator {
           text-align: center;
-          margin: 1.6rem 0 1.2rem;
-          color: var(--reader-muted);
+          margin: 2rem 0;
+          color: #8e877f;
           font-family: system-ui, sans-serif;
-          font-size: 0.74rem;
+          font-size: 0.8rem;
           letter-spacing: 0.08em;
           text-transform: uppercase;
         }
@@ -2104,71 +1624,29 @@
           content: '—';
           margin: 0 0.5rem;
         }
-        .story-content {
-          orphans: 3;
-          widows: 3;
-          word-break: break-word;
-        }
-        .story-content > * {
-          margin: 0 0 1rem;
-        }
-        .story-content p,
-        .story-content li,
-        .story-content blockquote,
-        .story-content div {
-          font-size: 1.02rem;
-        }
-        .story-content ul,
-        .story-content ol,
-        .story-content blockquote {
-          padding-left: 1.25rem;
-        }
-        .story-content pre {
-          white-space: pre-wrap;
-          overflow-wrap: anywhere;
-        }
-        .story-content a {
-          color: var(--reader-accent);
-        }
+        .story-content p { margin-bottom: 1.2rem; }
+        .story-content { orphans: 3; widows: 3; }
         .download-footer {
-          margin-top: 2.25rem;
+          margin-top: 3rem;
           padding-top: 1rem;
-          border-top: 1px solid var(--reader-rule);
-          color: var(--reader-muted);
+          border-top: 1px solid #ddd7cf;
+          color: #6c6257;
           font-family: system-ui, sans-serif;
-          font-size: 0.86rem;
+          font-size: 0.9rem;
         }
         .download-footer a {
-          color: var(--reader-accent);
+          color: #8b1538;
           text-decoration: none;
         }
         .download-footer a:hover {
           text-decoration: underline;
         }
-        @media (max-width: 640px) {
-          .reader-shell {
-            padding: 0.55rem 0.4rem 1.6rem;
-          }
-          .reader-paper {
-            border-radius: 12px;
-            padding: 1rem 0.85rem 1.3rem;
-            box-shadow: none;
-          }
-          .story-content p,
-          .story-content li,
-          .story-content blockquote,
-          .story-content div {
-            font-size: 1rem;
-          }
-        }
         @media print {
-          body { background: white; }
-          .reader-shell { max-width: none; padding: 0; }
-          .reader-paper { box-shadow: none; border-radius: 0; padding: 0; }
+          body { background: white; padding: 0; max-width: none; }
         }
       `;
     }
-
+ 
     function buildStoryBody(storyData, options = {}) {
       const showStoryTitle = options.showStoryTitle !== false;
       const titleTag = options.titleTag || 'h1';
@@ -2182,7 +1660,7 @@
         ${i > 0 ? '<div class="page-separator">Page ' + pg.pageNum + '</div>' : ''}
         <div class="story-content" id="page-${pg.pageNum}">${processPageText(pg.text)}</div>
       `).join('');
-
+ 
       return `
         <section class="story-section">
           ${label}
@@ -2191,55 +1669,45 @@
         </section>
       `;
     }
-
+ 
     function buildStoryHTML(storyData) {
       return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="color-scheme" content="light">
   <title>${escapeHtml(storyData.title)}</title>
   <style>${readingCSS()}</style>
 </head>
 <body>
-  <main class="reader-shell">
-    <article class="reader-paper">
-      ${buildStoryBody(storyData)}
-      ${buildDownloadFooter()}
-    </article>
-  </main>
+  ${buildStoryBody(storyData)}
+  ${buildDownloadFooter()}
 </body>
 </html>`;
     }
-
+ 
     function buildCombinedHTML(group) {
       const storiesHTML = group.stories.map((storyData, index) => {
         const chapterLabel = group.isSeries ? 'Chapter ' + (index + 1) : '';
         const titleTag = group.isSeries ? 'h2' : 'h1';
         return `${index > 0 ? '<div class="story-separator"></div>' : ''}${buildStoryBody(storyData, { chapterLabel, titleTag })}`;
       }).join('');
-
+ 
       return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="color-scheme" content="light">
   <title>${escapeHtml(group.title)}</title>
   <style>${readingCSS()}</style>
 </head>
 <body>
-  <main class="reader-shell">
-    <article class="reader-paper">
-      ${storiesHTML}
-      ${buildDownloadFooter()}
-    </article>
-  </main>
+  ${storiesHTML}
+  ${buildDownloadFooter()}
 </body>
 </html>`;
     }
-
+ 
     function buildIndexHTML(author, authorName, manifestEntries, exportMode) {
       const css = `
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -2282,7 +1750,7 @@
           </div>
         </div>
       `).join('');
-
+ 
       return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2308,7 +1776,7 @@
 </body>
 </html>`;
     }
-
+ 
     return {
       buildStoryHTML,
       buildCombinedHTML,
@@ -2322,10 +1790,10 @@
       groupFilename
     };
   })();
-
+ 
   const TextBuilder = (() => {
     const NEWLINE = String.fromCharCode(10);
-
+ 
     function cleanHtml(text) {
       return String(text || '')
         .replace(/<script[\s\S]*?<\/script>/gi, '')
@@ -2333,12 +1801,12 @@
         .replace(/on\w+="[^"]*"/gi, '')
         .replace(/on\w+='[^']*'/gi, '');
     }
-
+ 
     function htmlToText(text) {
       const container = document.createElement('div');
       container.innerHTML = cleanHtml(text);
       const parts = [];
-
+ 
       function visit(node) {
         if (!node) return;
         if (node.nodeType === Node.TEXT_NODE) {
@@ -2346,32 +1814,32 @@
           return;
         }
         if (node.nodeType !== Node.ELEMENT_NODE) return;
-
+ 
         const tag = node.tagName.toLowerCase();
         if (tag === 'br') {
           parts.push(NEWLINE);
           return;
         }
-
+ 
         const blockTags = new Set(['p', 'div', 'section', 'article', 'header', 'footer', 'blockquote', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
         const isBlock = blockTags.has(tag);
         if (isBlock && parts.length > 0) parts.push(NEWLINE);
         if (tag === 'li') parts.push('- ');
-
+ 
         Array.from(node.childNodes).forEach(visit);
-
+ 
         if (isBlock) parts.push(NEWLINE);
       }
-
+ 
       Array.from(container.childNodes).forEach(visit);
       return normalizePlainText(parts.join(''));
     }
-
+ 
     function normalizePlainText(text) {
       const lines = String(text || '').split(NEWLINE);
       const result = [];
       let previousBlank = false;
-
+ 
       lines.forEach(line => {
         const cleanedLine = line.replace(/[ 	]+$/g, '');
         const isBlank = cleanedLine.trim() === '';
@@ -2383,10 +1851,10 @@
         result.push(cleanedLine);
         previousBlank = false;
       });
-
+ 
       return result.join(NEWLINE).trim();
     }
-
+ 
     function buildTextFooter() {
       return [
         '==================================================',
@@ -2394,28 +1862,28 @@
         '=================================================='
       ].join(NEWLINE);
     }
-
+ 
     function buildStoryText(storyData, options = {}) {
       const showStoryTitle = options.showStoryTitle !== false;
       const chapterLabel = options.chapterLabel || '';
       const includeFooter = options.includeFooter !== false;
       const parts = [];
-
+ 
       if (chapterLabel) parts.push(chapterLabel);
       if (showStoryTitle) parts.push(storyData.title);
-
+ 
       (storyData.pages || []).forEach((page, index) => {
         if (index > 0) parts.push('Page ' + page.pageNum);
         parts.push(htmlToText(page.text));
       });
-
+ 
       if (includeFooter) {
         parts.push(buildTextFooter());
       }
-
+ 
       return normalizePlainText(parts.join(NEWLINE + NEWLINE));
     }
-
+ 
     function buildCombinedText(group) {
       const sections = group.stories.map((storyData, index) => {
         const chapterLabel = group.isSeries ? 'Chapter ' + (index + 1) : '';
@@ -2427,14 +1895,14 @@
         + buildTextFooter()
       );
     }
-
+ 
     return { buildStoryText, buildCombinedText };
   })();
-
+ 
   // ============================================================
   // PHASE 7: EPUB BUILDER
   // ============================================================
-
+ 
   const EPUBBuilder = (() => {
     function generateUUID() {
       return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
@@ -2443,11 +1911,24 @@
         return v.toString(16);
       });
     }
-
+ 
     function makeSlug(str) {
       return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 60);
     }
-
+ 
+    function processPageTextEPUB(text) {
+      if (!text) return '<p><em>[No content available]</em></p>';
+      let processed = text
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/on\w+="[^"]*"/gi, '')
+        .replace(/on\w+='[^']*'/gi, '');
+      if (!processed.trim().startsWith('<')) {
+        processed = processed.split('\n\n').map(p => '<p>' + p.replace(/\n/g, '<br/>') + '</p>').join('\n');
+      }
+      return processed;
+    }
+ 
     function buildStorySectionBody(storyData, options = {}) {
       const showStoryTitle = options.showStoryTitle !== false;
       const chapterLabel = options.chapterLabel || '';
@@ -2458,22 +1939,19 @@
       const labelHtml = chapterLabel ? '<p class="section-label">' + HTMLBuilder.escapeHtml(chapterLabel) + '</p>' : '';
       const pagesHTML = pages.map((pg, index) => {
         const pageLabel = index > 0 ? '<h2>Page ' + pg.pageNum + '</h2>' : '';
-        return pageLabel + StoryMarkup.toXHTMLFragment(pg.text);
+        return pageLabel + processPageTextEPUB(pg.text);
       }).join('\n');
       const footerHtml = includeFooter ? HTMLBuilder.buildDownloadFooterXHTML() : '';
       return labelHtml + titleHtml + pagesHTML + footerHtml;
     }
-
+ 
     async function buildEPUBBook(book, outputType = 'blob', shouldCancel) {
       const uid = generateUUID();
       const { title, author, authorName, category, description, sections, slug, dateISO } = book;
-      if (!sections || !sections.length) {
-        throw new Error('EPUB requires at least one content section.');
-      }
       const safeTitle = HTMLBuilder.escapeHtml(title);
       const safeAuthor = HTMLBuilder.escapeHtml(authorName || author);
       const authorLine = safeAuthor ? '<p class="by">by ' + safeAuthor + '</p>' : '';
-
+ 
       // META-INF/container.xml
       const containerXml = `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:schemas:container">
@@ -2481,7 +1959,7 @@
     <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
   </rootfiles>
 </container>`;
-
+ 
       // Title page
       const coverXHTML = `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -2504,13 +1982,13 @@
   </div>
 </body>
 </html>`;
-
+ 
       // Content sections
       const chapterFiles = [];
       sections.forEach((section, i) => {
         const id = 'section-' + String(i + 1).padStart(3, '0');
         const filename = 'section' + String(i + 1).padStart(3, '0') + '.xhtml';
-
+ 
         const xhtml = `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -2530,22 +2008,22 @@
   ${section.body}
 </body>
 </html>`;
-
+ 
         chapterFiles.push({ id, filename, title: section.title });
         chapterFiles[chapterFiles.length - 1].xhtml = xhtml;
       });
-
+ 
       // content.opf
       const manifestItems = [
         '<item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>',
         ...chapterFiles.map(c => `<item id="${c.id}" href="${c.filename}" media-type="application/xhtml+xml"/>`)
       ].join('\n    ');
-
+ 
       const spineItems = [
         '<itemref idref="cover"/>',
         ...chapterFiles.map(c => `<itemref idref="${c.id}"/>`)
       ].join('\n    ');
-
+ 
       const opf = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookId" version="2.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
@@ -2558,6 +2036,7 @@
     <dc:date>${dateISO}</dc:date>
     <dc:language>en</dc:language>
     ${slug ? '<dc:source>https://www.literotica.com/s/' + slug + '</dc:source>' : ''}
+    <meta name="cover" content="cover"/>
   </metadata>
   <manifest>
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
@@ -2567,13 +2046,13 @@
     ${spineItems}
   </spine>
 </package>`;
-
+ 
       // toc.ncx
       const navPoints = [
         `<navPoint id="cover" playOrder="1"><navLabel><text>Cover</text></navLabel><content src="cover.xhtml"/></navPoint>`,
         ...chapterFiles.map((c, i) => `<navPoint id="${c.id}" playOrder="${i + 2}"><navLabel><text>${HTMLBuilder.escapeHtml(c.title)}</text></navLabel><content src="${c.filename}"/></navPoint>`)
       ].join('\n    ');
-
+ 
       const ncx = `<?xml version="1.0" encoding="UTF-8"?>
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
   <head>
@@ -2587,7 +2066,7 @@
     ${navPoints}
   </navMap>
 </ncx>`;
-
+ 
       const files = [
         { name: 'mimetype', data: 'application/epub+zip', date: new Date(0) },
         { name: 'META-INF/container.xml', data: containerXml },
@@ -2596,22 +2075,7 @@
         { name: 'OEBPS/content.opf', data: opf },
         { name: 'OEBPS/toc.ncx', data: ncx },
       ];
-
-      const requiredNames = ['mimetype', 'META-INF/container.xml', 'OEBPS/cover.xhtml', 'OEBPS/content.opf', 'OEBPS/toc.ncx'];
-      requiredNames.forEach(name => {
-        if (!files.find(file => file.name === name)) {
-          throw new Error('EPUB packaging is missing required file: ' + name);
-        }
-      });
-
-      StoryMarkup.validateXMLDocument(containerXml, 'application/xml', 'EPUB container.xml');
-      StoryMarkup.validateXMLDocument(coverXHTML, 'application/xhtml+xml', 'EPUB cover');
-      chapterFiles.forEach(file => {
-        StoryMarkup.validateXMLDocument(file.xhtml, 'application/xhtml+xml', 'EPUB section ' + file.title);
-      });
-      StoryMarkup.validateXMLDocument(opf, 'application/xml', 'EPUB package.opf');
-      StoryMarkup.validateXMLDocument(ncx, 'application/xml', 'EPUB toc.ncx');
-
+ 
       return StoredZIPBuilder.buildArchive(
         files,
         null,
@@ -2619,7 +2083,7 @@
         { outputType, mimeType: 'application/epub+zip' }
       );
     }
-
+ 
     async function buildEPUB(storyData, shouldCancel) {
       return buildEPUBBook({
         title: storyData.title,
@@ -2635,7 +2099,7 @@
         }],
       }, 'blob', shouldCancel);
     }
-
+ 
     async function buildEPUBBytes(storyData, shouldCancel) {
       return buildEPUBBook({
         title: storyData.title,
@@ -2651,7 +2115,7 @@
         }],
       }, 'uint8array', shouldCancel);
     }
-
+ 
     async function buildCombinedEPUB(group, shouldCancel) {
       return buildEPUBBook({
         title: group.title,
@@ -2671,7 +2135,7 @@
         })),
       }, 'blob', shouldCancel);
     }
-
+ 
     async function buildCombinedEPUBBytes(group, shouldCancel) {
       return buildEPUBBook({
         title: group.title,
@@ -2691,10 +2155,10 @@
         })),
       }, 'uint8array', shouldCancel);
     }
-
+ 
     return { buildEPUB, buildEPUBBytes, buildCombinedEPUB, buildCombinedEPUBBytes };
   })();
-
+ 
   const StoredZIPBuilder = (() => {
     const ZIP_VERSION = 20;
     const STORE_METHOD = 0;
@@ -2714,11 +2178,11 @@
       }
       return table;
     })();
-
+ 
     function encodeUTF8(text) {
       const value = String(text == null ? '' : text);
       if (encoder) return encoder.encode(value);
-
+ 
       const escaped = unescape(encodeURIComponent(value));
       const bytes = new Uint8Array(escaped.length);
       for (let i = 0; i < escaped.length; i++) {
@@ -2726,13 +2190,13 @@
       }
       return bytes;
     }
-
+ 
     function toUint8Array(data) {
       if (data instanceof Uint8Array) return data;
       if (data instanceof ArrayBuffer) return new Uint8Array(data);
       return encodeUTF8(data);
     }
-
+ 
     function computeCRC32(bytes) {
       let crc = 0xffffffff;
       for (let i = 0; i < bytes.length; i++) {
@@ -2740,7 +2204,7 @@
       }
       return (crc ^ 0xffffffff) >>> 0;
     }
-
+ 
     function getDosTimestamp(input) {
       const date = input instanceof Date ? new Date(input.getTime()) : new Date();
       const year = Math.min(Math.max(date.getFullYear(), 1980), 2107);
@@ -2749,27 +2213,27 @@
       const hours = Math.min(Math.max(date.getHours(), 0), 23);
       const minutes = Math.min(Math.max(date.getMinutes(), 0), 59);
       const seconds = Math.min(Math.max(Math.floor(date.getSeconds() / 2), 0), 29);
-
+ 
       return {
         date: ((year - 1980) << 9) | (month << 5) | day,
         time: (hours << 11) | (minutes << 5) | seconds,
       };
     }
-
+ 
     function writeUint16(view, offset, value) {
       view.setUint16(offset, value & 0xffff, true);
     }
-
+ 
     function writeUint32(view, offset, value) {
       view.setUint32(offset, value >>> 0, true);
     }
-
+ 
     async function yieldIfNeeded(index) {
       if (index % 8 === 0) {
         await sleep(0);
       }
     }
-
+ 
     async function buildArchive(files, onProgress, shouldCancel, options = {}) {
       const outputType = options.outputType || 'blob';
       const mimeType = options.mimeType || 'application/zip';
@@ -2788,27 +2252,27 @@
           localOffset: 0,
         };
       });
-
+ 
       let localSectionSize = 0;
       let centralSectionSize = 0;
       normalizedFiles.forEach(file => {
         localSectionSize += 30 + file.nameBytes.length + file.size;
         centralSectionSize += 46 + file.nameBytes.length;
       });
-
+ 
       const endSectionSize = 22;
       const output = new Uint8Array(localSectionSize + centralSectionSize + endSectionSize);
       const view = new DataView(output.buffer);
       const totalStages = Math.max(1, normalizedFiles.length + 1);
       let offset = 0;
-
+ 
       for (let i = 0; i < normalizedFiles.length; i++) {
         if (shouldCancel && shouldCancel()) throw makeAbortError();
         const file = normalizedFiles[i];
         if (onProgress) {
           onProgress(i, totalStages, 'Writing ZIP entry: ' + file.name + ' (' + i + '/' + normalizedFiles.length + ')');
         }
-
+ 
         file.localOffset = offset;
         writeUint32(view, offset, LOCAL_FILE_HEADER_SIGNATURE);
         writeUint16(view, offset + 4, ZIP_VERSION);
@@ -2822,24 +2286,24 @@
         writeUint16(view, offset + 26, file.nameBytes.length);
         writeUint16(view, offset + 28, 0);
         offset += 30;
-
+ 
         output.set(file.nameBytes, offset);
         offset += file.nameBytes.length;
         output.set(file.dataBytes, offset);
         offset += file.size;
-
+ 
         await yieldIfNeeded(i + 1);
       }
-
+ 
       const centralDirectoryOffset = offset;
       if (onProgress) {
         onProgress(normalizedFiles.length, totalStages, 'Finalizing ZIP directory...');
       }
-
+ 
       for (let i = 0; i < normalizedFiles.length; i++) {
         if (shouldCancel && shouldCancel()) throw makeAbortError();
         const file = normalizedFiles[i];
-
+ 
         writeUint32(view, offset, CENTRAL_DIRECTORY_SIGNATURE);
         writeUint16(view, offset + 4, ZIP_VERSION);
         writeUint16(view, offset + 6, ZIP_VERSION);
@@ -2858,13 +2322,13 @@
         writeUint32(view, offset + 38, 0);
         writeUint32(view, offset + 42, file.localOffset);
         offset += 46;
-
+ 
         output.set(file.nameBytes, offset);
         offset += file.nameBytes.length;
-
+ 
         await yieldIfNeeded(normalizedFiles.length + i + 1);
       }
-
+ 
       const centralDirectorySize = offset - centralDirectoryOffset;
       writeUint32(view, offset, END_OF_CENTRAL_DIRECTORY_SIGNATURE);
       writeUint16(view, offset + 4, 0);
@@ -2875,25 +2339,25 @@
       writeUint32(view, offset + 16, centralDirectoryOffset);
       writeUint16(view, offset + 20, 0);
       offset += 22;
-
+ 
       if (onProgress) {
         onProgress(totalStages, totalStages, 'ZIP archive ready');
       }
-
+ 
       if (outputType === 'uint8array') {
         return output;
       }
-
+ 
       return new Blob([output], { type: mimeType });
     }
-
+ 
     return { buildArchive };
   })();
-
+ 
   // ============================================================
   // PHASE 8: ZIP PACKAGE GENERATOR
   // ============================================================
-
+ 
   const ZIPBuilder = (() => {
     async function buildCollection(author, authorName, downloadedStories, selectedFormats, exportMode, onProgress, errors, shouldCancel) {
       const txtOnlyArchive = !!selectedFormats.txt && !selectedFormats.html && !selectedFormats.epub;
@@ -2906,7 +2370,7 @@
       const exportGroups = exportMode === 'combined'
         ? [buildSelectedCollectionGroup(author, authorName, downloadedStories)]
         : buildExportGroups(downloadedStories);
-
+ 
       const manifest = {
         generated: new Date().toISOString(),
         author: author,
@@ -2916,36 +2380,36 @@
         exportMode: exportMode,
         entries: [],
       };
-
+ 
       let processed = 0;
       const errorLog = [...errors];
       const selectedFormatCount = ['html', 'epub', 'txt'].filter(fmt => !!selectedFormats[fmt]).length;
       const exportUnitTotal = exportMode === 'combined'
         ? exportGroups.length
         : exportGroups.reduce((sum, group) => sum + group.stories.length, 0);
-
+ 
       function updateZipPreparationProgress(label) {
         if (!onProgress) return;
         const current = Math.max(0, processed);
         const total = Math.max(1, exportUnitTotal);
         onProgress(current, total, 'Preparing ZIP files: ' + label + ' (' + current + '/' + total + ')');
       }
-
+ 
       async function yieldDuringZipWork() {
         if (shouldCancel && shouldCancel()) throw makeAbortError();
         await sleep(0);
         if (shouldCancel && shouldCancel()) throw makeAbortError();
       }
-
+ 
       function addStoredArchiveFile(name, data) {
         storedFiles.push({ name, data, date: new Date() });
       }
-
+ 
       for (const group of exportGroups) {
         if (shouldCancel && shouldCancel()) {
           throw makeAbortError();
         }
-
+ 
         try {
           if (exportMode === 'combined') {
             processed++;
@@ -2959,7 +2423,7 @@
               dateFormatted: group.dateFormatted,
               parts: selectedFormatCount,
             };
-
+ 
             if (selectedFormats.html && htmlFolder) {
               if (shouldCancel && shouldCancel()) throw makeAbortError();
               const filename = HTMLBuilder.groupFilename(group) + '.html';
@@ -2968,7 +2432,7 @@
               entry.html = 'html/' + filename;
               await yieldDuringZipWork();
             }
-
+ 
             if (selectedFormats.epub && epubFolder) {
               if (shouldCancel && shouldCancel()) throw makeAbortError();
               Logger.info('Generating combined EPUB: ' + group.title);
@@ -2980,7 +2444,7 @@
               entry.epub = 'epub/' + filename;
               await yieldDuringZipWork();
             }
-
+ 
             if (selectedFormats.txt) {
               if (shouldCancel && shouldCancel()) throw makeAbortError();
               const filename = HTMLBuilder.groupFilename(group) + '.txt';
@@ -2995,7 +2459,7 @@
               }
               await yieldDuringZipWork();
             }
-
+ 
             manifest.entries.push(entry);
             await yieldDuringZipWork();
           } else {
@@ -3012,7 +2476,7 @@
                 dateFormatted: storyData.dateFormatted,
                 parts: selectedFormatCount,
               };
-
+ 
               if (selectedFormats.html && htmlFolder) {
                 if (shouldCancel && shouldCancel()) throw makeAbortError();
                 const filename = HTMLBuilder.storyFilename(storyData) + '.html';
@@ -3020,7 +2484,7 @@
                 entry.html = 'html/' + filename;
                 await yieldDuringZipWork();
               }
-
+ 
               if (selectedFormats.epub && epubFolder) {
                 if (shouldCancel && shouldCancel()) throw makeAbortError();
                 Logger.info('Generating EPUB: ' + storyData.title);
@@ -3030,7 +2494,7 @@
                 entry.epub = 'epub/' + filename;
                 await yieldDuringZipWork();
               }
-
+ 
               if (selectedFormats.txt) {
                 if (shouldCancel && shouldCancel()) throw makeAbortError();
                 const filename = HTMLBuilder.storyFilename(storyData) + '.txt';
@@ -3042,7 +2506,7 @@
                 }
                 await yieldDuringZipWork();
               }
-
+ 
               manifest.entries.push(entry);
               await yieldDuringZipWork();
             }
@@ -3052,7 +2516,7 @@
           errorLog.push({ story: group.title, error: err.message });
         }
       }
-
+ 
       // Index HTML
       const indexHTML = HTMLBuilder.buildIndexHTML(author, authorName, manifest.entries, exportMode);
       if (useStoredArchive) {
@@ -3060,14 +2524,14 @@
       } else if (zip) {
         zip.file('index.html', indexHTML);
       }
-
+ 
       // Manifest
       if (useStoredArchive) {
         addStoredArchiveFile('manifest.json', JSON.stringify(manifest, null, 2));
       } else if (zip) {
         zip.file('manifest.json', JSON.stringify(manifest, null, 2));
       }
-
+ 
       // Errors log
       if (errorLog.length > 0) {
         const errText = errorLog.map(e => '[ERROR] ' + e.story + ': ' + e.error).join('\n');
@@ -3077,21 +2541,21 @@
           zip.file('errors.log', errText);
         }
       }
-
+ 
       if (useStoredArchive) {
         if (onProgress) {
           onProgress(0, Math.max(1, storedFiles.length + 1), 'Writing ZIP archive...');
         }
         return StoredZIPBuilder.buildArchive(storedFiles, onProgress, shouldCancel);
       }
-
+ 
       const zipCompression = txtOnlyArchive ? 'STORE' : 'DEFLATE';
       const compressionOptions = txtOnlyArchive ? undefined : { level: 1 };
-
+ 
       if (onProgress) {
         onProgress(0, 100, 'Compressing archive...');
       }
-
+ 
       return zip.generateAsync(
         { type: 'blob', compression: zipCompression, compressionOptions, streamFiles: true },
         (metadata) => {
@@ -3099,7 +2563,7 @@
             throw makeAbortError();
           }
           if (!onProgress) return;
-
+ 
           const percent = Math.max(0, Math.min(100, metadata && typeof metadata.percent === 'number' ? metadata.percent : 0));
           const rounded = Math.round(percent);
           const currentFile = metadata && metadata.currentFile ? String(metadata.currentFile) : 'archive';
@@ -3107,14 +2571,14 @@
         }
       );
     }
-
+ 
     return { buildCollection };
   })();
-
+ 
   // ============================================================
   // STATE MANAGER
   // ============================================================
-
+ 
   const State = (() => {
     let _state = {
       author: null,
@@ -3135,32 +2599,32 @@
       searchQuery: '',
       expandedSeries: new Set(),
     };
-
+ 
     const listeners = new Set();
-
+ 
     function getState() { return { ..._state }; }
-
+ 
     function setState(partial) {
       _state = { ..._state, ...partial };
       listeners.forEach(fn => fn(_state));
     }
-
+ 
     function subscribe(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);
     }
-
+ 
     function getFilteredItems() {
       const { grouped, filterCategory, filterRating, filterType, sortBy, searchQuery } = _state;
       const q = searchQuery.toLowerCase();
-
+ 
       function matchesFilters(story) {
         if (q && !story.title.toLowerCase().includes(q)) return false;
         if (filterCategory !== 'all' && story.category !== filterCategory) return false;
         if (filterRating > 0 && story.rating < filterRating) return false;
         return true;
       }
-
+ 
       let items = [];
       if (filterType !== 'series') {
         items = [...items, ...grouped.standalones.filter(matchesFilters).map(s => ({ ...s, _type: 'standalone' }))];
@@ -3173,7 +2637,7 @@
           }
         });
       }
-
+ 
       items.sort((a, b) => {
         if (sortBy === 'rating') return b.rating - a.rating;
         if (sortBy === 'alpha') return a.title.localeCompare(b.title);
@@ -3181,10 +2645,10 @@
         // date (default)
         return (b.date || '') > (a.date || '') ? 1 : -1;
       });
-
+ 
       return items;
     }
-
+ 
     function getStoryIdsFromItems(items) {
       const ids = new Set();
       items.forEach(item => {
@@ -3196,22 +2660,22 @@
       });
       return ids;
     }
-
+ 
     function getAllStoryIds() {
       const ids = new Set();
       _state.grouped.standalones.forEach(s => ids.add(s.id));
       _state.grouped.series.forEach(s => s.chapters.forEach(c => ids.add(c.id)));
       return ids;
     }
-
+ 
     function selectAll() {
       setState({ selected: getStoryIdsFromItems(getFilteredItems()) });
     }
-
+ 
     function deselectAll() {
       setState({ selected: new Set() });
     }
-
+ 
     function selectRated(minRating) {
       const ids = new Set();
       getFilteredItems().forEach(item => {
@@ -3225,26 +2689,26 @@
       });
       setState({ selected: ids });
     }
-
+ 
     function selectStandalones() {
       setState({
         selected: getStoryIdsFromItems(getFilteredItems().filter(item => item._type === 'standalone'))
       });
     }
-
+ 
     function selectSeries() {
       setState({
         selected: getStoryIdsFromItems(getFilteredItems().filter(item => item._type === 'series'))
       });
     }
-
+ 
     function toggleItem(id) {
       const next = new Set(_state.selected);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       setState({ selected: next });
     }
-
+ 
     function toggleSeries(series) {
       const next = new Set(_state.selected);
       const ids = series.chapters.map(c => c.id);
@@ -3253,25 +2717,25 @@
       else ids.forEach(id => next.add(id));
       setState({ selected: next });
     }
-
+ 
     function toggleSeriesExpand(id) {
       const next = new Set(_state.expandedSeries);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       setState({ expandedSeries: next });
     }
-
+ 
     function getCategories() {
       const cats = new Set();
       _state.grouped.standalones.forEach(s => cats.add(s.category));
       _state.grouped.series.forEach(s => s.chapters.forEach(c => cats.add(c.category)));
       return ['all', ...Array.from(cats).sort()];
     }
-
+ 
     function getTotalCount() {
       return _state.grouped.standalones.length + _state.grouped.series.reduce((s, g) => s + g.chapters.length, 0);
     }
-
+ 
     return {
       getState, setState, subscribe,
       getFilteredItems, getAllStoryIds,
@@ -3280,11 +2744,11 @@
       getCategories, getTotalCount,
     };
   })();
-
+ 
   // ============================================================
   // PHASE 4: UI SHELL
   // ============================================================
-
+ 
   const UI = (() => {
     let panelEl = null;
     let logEl = null;
@@ -3297,7 +2761,7 @@
     let catalogStatusEl = null;
     let batchWarningEl = null;
     let isOpen = true;
-
+ 
     const CSS = `
       #litdl-panel {
         position: fixed;
@@ -3566,21 +3030,21 @@
         body.litdl-active { margin-right: 0 !important; margin-bottom: 50vh !important; }
       }
     `;
-
+ 
     function createPanel() {
       isOpen = Settings.get('panelOpen') !== false;
-
+ 
       if (document.getElementById('litdl-panel') || document.getElementById('litdl-toggle')) {
         Logger.warn('UI already mounted; skipping duplicate panel injection');
         return;
       }
-
+ 
       // Add styles
       const style = document.createElement('style');
       style.id = 'litdl-styles';
       style.textContent = CSS;
       document.head.appendChild(style);
-
+ 
       // Toggle button
       const toggle = document.createElement('button');
       toggle.id = 'litdl-toggle';
@@ -3592,12 +3056,12 @@
         document.body.classList.toggle('litdl-active', isOpen);
       };
       document.body.appendChild(toggle);
-
+ 
       // Panel
       panelEl = document.createElement('div');
       panelEl.id = 'litdl-panel';
       if (!isOpen) panelEl.classList.add('collapsed');
-
+ 
       panelEl.innerHTML = `
         <div class="litdl-header">
           <h2>📥 Literotica Downloader</h2>
@@ -3698,10 +3162,10 @@
           <div class="litdl-log" id="litdl-log"></div>
         </div>
       `;
-
+ 
       document.body.appendChild(panelEl);
       if (isOpen) document.body.classList.add('litdl-active');
-
+ 
       // Cache refs
       logEl = panelEl.querySelector('#litdl-log');
       progressFillEl = panelEl.querySelector('#litdl-progress-fill');
@@ -3711,19 +3175,19 @@
       selectedCountEl = panelEl.querySelector('#litdl-selected-count');
       catalogStatusEl = panelEl.querySelector('#litdl-catalog-status');
       batchWarningEl = panelEl.querySelector('#litdl-batch-warning');
-
+ 
       // Wire up events
       wireEvents();
-
+ 
       // Subscribe to logger
       Logger.onLog(entry => appendLog(entry));
-
+ 
       // Subscribe to state
       State.subscribe(state => renderState(state));
-
+ 
       Logger.info('Literotica Downloader initialized (v' + SCRIPT_VERSION + ')');
     }
-
+ 
     function wireEvents() {
       // Filters
       panelEl.querySelector('#litdl-search').addEventListener('input', e => {
@@ -3750,7 +3214,7 @@
         Settings.set('sortBy', e.target.value);
         renderStoryList();
       });
-
+ 
       // Selection buttons
       panelEl.querySelector('#litdl-sel-all').onclick = () => State.selectAll();
       panelEl.querySelector('#litdl-desel-all').onclick = () => State.deselectAll();
@@ -3764,13 +3228,13 @@
           Logger.info('Restored previous selection: ' + last.length + ' items');
         }
       };
-
+ 
       const contentFormats = ['html', 'epub', 'txt'];
       const allFormatButtons = ['html', 'epub', 'txt'].reduce((acc, fmt) => {
         acc[fmt] = panelEl.querySelector('#litdl-fmt-' + fmt);
         return acc;
       }, {});
-
+ 
       const getActiveContentFormatCount = () => contentFormats.filter(fmt => allFormatButtons[fmt].classList.contains('active')).length;
       const ensureAtLeastOneContentFormat = () => {
         if (getActiveContentFormatCount() === 0) {
@@ -3778,7 +3242,7 @@
           Settings.set('exportHtml', true);
         }
       };
-
+ 
       contentFormats.forEach(fmt => {
         const btn = allFormatButtons[fmt];
         btn.onclick = () => {
@@ -3792,7 +3256,7 @@
           ensureAtLeastOneContentFormat();
         };
       });
-
+ 
       // Apply saved format state
       ['html', 'epub', 'txt'].forEach(fmt => {
         const saved = Settings.get('export' + fmt.charAt(0).toUpperCase() + fmt.slice(1));
@@ -3800,7 +3264,7 @@
         if (saved === true) allFormatButtons[fmt].classList.add('active');
       });
       ensureAtLeastOneContentFormat();
-
+ 
       const modeButtons = {
         combined: panelEl.querySelector('#litdl-mode-combined'),
         separate: panelEl.querySelector('#litdl-mode-separate'),
@@ -3813,12 +3277,12 @@
       applyExportMode(Settings.get('exportMode') === 'separate' ? 'separate' : 'combined');
       modeButtons.combined.onclick = () => applyExportMode('combined');
       modeButtons.separate.onclick = () => applyExportMode('separate');
-
+ 
       // Download button
       panelEl.querySelector('#litdl-download-btn').onclick = startDownload;
       panelEl.querySelector('#litdl-abort-btn').onclick = requestDownloadAbort;
     }
-
+ 
     function appendLog(entry) {
       if (!logEl) return;
       const line = document.createElement('div');
@@ -3829,7 +3293,7 @@
       // Trim log to 200 entries
       while (logEl.children.length > 200) logEl.removeChild(logEl.firstChild);
     }
-
+ 
     function updateProgress(current, total, label) {
       const section = panelEl.querySelector('#litdl-progress-section');
       section.style.display = 'block';
@@ -3838,22 +3302,22 @@
         progressFillEl.style.width = Math.min(100, (current / total) * 100) + '%';
       }
     }
-
+ 
     function hideProgress() {
       const section = panelEl.querySelector('#litdl-progress-section');
       if (section) section.style.display = 'none';
     }
-
+ 
     function renderState(state) {
       // Update counts
       const total = State.getTotalCount();
       if (statusCountEl) statusCountEl.textContent = total;
       if (selectedCountEl) selectedCountEl.textContent = state.selected.size;
-
+ 
       // Update author name
       const authorEl = panelEl.querySelector('#litdl-author-name');
       if (authorEl && state.author) authorEl.textContent = state.authorName || state.author;
-
+ 
       if (catalogStatusEl) {
         const status = state.catalogStatus;
         if (status && (status.worksPageCurrentTotal || status.worksPageAllTotal || status.finalCount)) {
@@ -3875,7 +3339,7 @@
           catalogStatusEl.textContent = '';
         }
       }
-
+ 
       // Update download button
       const dlBtn = panelEl.querySelector('#litdl-download-btn');
       if (dlBtn) {
@@ -3890,7 +3354,7 @@
         abortBtn.disabled = !state.downloading || state.cancelRequested;
         abortBtn.textContent = state.cancelRequested ? 'Stopping...' : 'Stop Download';
       }
-
+ 
       const combinedBtn = panelEl.querySelector('#litdl-mode-combined');
       const separateBtn = panelEl.querySelector('#litdl-mode-separate');
       if (combinedBtn && separateBtn) {
@@ -3898,14 +3362,14 @@
         combinedBtn.disabled = !canCombine;
         combinedBtn.style.opacity = canCombine ? '1' : '0.5';
         combinedBtn.style.cursor = canCombine ? 'pointer' : 'not-allowed';
-
+ 
         if (!canCombine && combinedBtn.classList.contains('active')) {
           combinedBtn.classList.remove('active');
           separateBtn.classList.add('active');
           Settings.set('exportMode', 'separate');
         }
       }
-
+ 
       if (batchWarningEl) {
         const overLimit = state.selected.size > LARGE_BATCH_WARNING_THRESHOLD;
         batchWarningEl.style.display = overLimit ? 'block' : 'none';
@@ -3915,7 +3379,7 @@
           batchWarningEl.textContent = '';
         }
       }
-
+ 
       // Update category filter
       const catSelect = panelEl.querySelector('#litdl-filter-cat');
       if (catSelect && state.grouped) {
@@ -3923,22 +3387,22 @@
         const current = catSelect.value;
         catSelect.innerHTML = cats.map(c => `<option value="${c}" ${c === current ? 'selected' : ''}>${c === 'all' ? 'All Categories' : c}</option>`).join('');
       }
-
+ 
       renderStoryList();
     }
-
+ 
     function renderStoryList() {
       if (!storyListEl) return;
       const state = State.getState();
       const items = State.getFilteredItems();
-
+ 
       if (items.length === 0) {
         storyListEl.innerHTML = '<div style="padding:20px;text-align:center;color:#333;">No stories match filters</div>';
         return;
       }
-
+ 
       const fragment = document.createDocumentFragment();
-
+ 
       items.forEach(item => {
         if (item._type === 'series') {
           fragment.appendChild(renderSeriesItem(item, state));
@@ -3946,11 +3410,11 @@
           fragment.appendChild(renderStoryItem(item, state));
         }
       });
-
+ 
       storyListEl.innerHTML = '';
       storyListEl.appendChild(fragment);
     }
-
+ 
     function renderStoryItem(story, state) {
       const el = document.createElement('div');
       el.className = 'litdl-story-item';
@@ -3963,7 +3427,7 @@
             <span>${HTMLBuilder.escapeHtml(story.category)}</span>
             ${story.rating > 0 ? '<span class="litdl-rating">★ ' + story.rating.toFixed(2) + '</span>' : ''}
             <span>${story.dateFormatted}</span>
-            ${story.pageCount > 0 ? '<span>' + story.pageCount + 'p</span>' : ''}
+            <span>${story.pageCount}p</span>
             ${story.wordCount > 0 ? '<span>~' + Math.round(story.wordCount / 1000) + 'k words</span>' : ''}
           </div>
         </div>
@@ -3979,7 +3443,7 @@
       };
       return el;
     }
-
+ 
     function renderSeriesItem(series, state) {
       const el = document.createElement('div');
       const isExpanded = state.expandedSeries.has(series.id);
@@ -3987,9 +3451,9 @@
       const selectedCount = chapterIds.filter(id => state.selected.has(id)).length;
       const allSelected = selectedCount === chapterIds.length && chapterIds.length > 0;
       const partialSelected = selectedCount > 0 && !allSelected;
-
+ 
       const checkClass = allSelected ? 'checked' : partialSelected ? 'partial' : '';
-
+ 
       el.innerHTML = `
         <div class="litdl-story-item series-parent" style="padding-right:8px;">
           <div class="litdl-checkbox ${checkClass}" data-series-id="${series.id}"></div>
@@ -3999,7 +3463,7 @@
               <span>${HTMLBuilder.escapeHtml(series.category)}</span>
               ${series.rating > 0 ? '<span class="litdl-rating">★ ' + series.rating.toFixed(2) + '</span>' : ''}
               <span>${series.chapters.length} chapters</span>
-              ${series.pageCount > 0 ? '<span>' + series.pageCount + 'p total</span>' : ''}
+              <span>${series.pageCount}p total</span>
             </div>
             <span class="litdl-series-label">SERIES — ${selectedCount}/${series.chapters.length} selected</span>
           </div>
@@ -4014,26 +3478,26 @@
               <div class="litdl-story-meta">
                 ${ch.rating > 0 ? '<span class="litdl-rating">★ ' + ch.rating.toFixed(2) + '</span>' : ''}
                 <span>${ch.dateFormatted}</span>
-                ${ch.pageCount > 0 ? '<span>' + ch.pageCount + 'p</span>' : ''}
+                <span>${ch.pageCount}p</span>
               </div>
             </div>
           </div>`;
         }).join('') + '</div>' : ''}
       `;
-
+ 
       // Series checkbox
       el.querySelector('[data-series-id]').onclick = (e) => {
         e.stopPropagation();
         State.toggleSeries(series);
         Settings.set('lastSelection', Array.from(State.getState().selected));
       };
-
+ 
       // Expand button
       el.querySelector('[data-expand-id]').onclick = (e) => {
         e.stopPropagation();
         State.toggleSeriesExpand(series.id);
       };
-
+ 
       // Chapter checkboxes
       el.querySelectorAll('[data-ch-id]').forEach(chEl => {
         chEl.onclick = (e) => {
@@ -4042,33 +3506,33 @@
           Settings.set('lastSelection', Array.from(State.getState().selected));
         };
       });
-
+ 
       return el;
     }
-
+ 
     function setLoading(msg) {
       if (storyListEl) {
         storyListEl.innerHTML = `<div style="padding:30px;text-align:center;color:#444;">${msg}</div>`;
       }
     }
-
+ 
     return { createPanel, updateProgress, hideProgress, setLoading, renderStoryList };
   })();
-
+ 
   // ============================================================
   // DOWNLOAD ORCHESTRATION
   // ============================================================
-
+ 
   let activeDownloadController = null;
   let downloadAbortRequested = false;
-
+ 
   function beginDownloadSession() {
     downloadAbortRequested = false;
     activeDownloadController = typeof AbortController !== 'undefined' ? new AbortController() : null;
     State.setState({ cancelRequested: false });
     return activeDownloadController ? activeDownloadController.signal : null;
   }
-
+ 
   function requestDownloadAbort() {
     if (!State.getState().downloading || downloadAbortRequested) return;
     downloadAbortRequested = true;
@@ -4078,39 +3542,26 @@
     }
     Logger.warn('Abort requested. Stopping after the current step...');
   }
-
+ 
   function isDownloadAbortRequested() {
     return downloadAbortRequested;
   }
-
+ 
   function ensureDownloadNotAborted() {
     if (downloadAbortRequested) {
       throw makeAbortError();
     }
   }
-
+ 
   function finishDownloadSession() {
     activeDownloadController = null;
     downloadAbortRequested = false;
   }
-
-  if (window.__LITDL_HARNESS__) {
-    window.__LITDL_HARNESS_API__ = {
-      version: SCRIPT_VERSION,
-      buildStoryHTML: HTMLBuilder.buildStoryHTML,
-      buildCombinedHTML: HTMLBuilder.buildCombinedHTML,
-      buildStoryText: TextBuilder.buildStoryText,
-      buildCombinedText: TextBuilder.buildCombinedText,
-      buildEPUBBytes: EPUBBuilder.buildEPUBBytes,
-      buildCombinedEPUBBytes: EPUBBuilder.buildCombinedEPUBBytes,
-    };
-    return;
-  }
-
+ 
   async function startDownload() {
     const state = State.getState();
     if (state.selected.size === 0 || state.downloading) return;
-
+ 
     if (typeof saveAs !== 'function') {
       Logger.error('FileSaver is not available. Verify @require for FileSaver.js in Tampermonkey.');
       return;
@@ -4120,15 +3571,15 @@
       Logger.error('JSZip is not available. EPUB export requires JSZip.');
       return;
     }
-
+ 
     const downloadSignal = beginDownloadSession();
     State.setState({ downloading: true, errors: [], cancelRequested: false });
     Logger.info('Starting download of ' + state.selected.size + ' stories');
-
+ 
     // Collect all selected story metadata
     const { grouped } = state;
     const selectedStories = [];
-
+ 
     grouped.standalones.forEach(s => {
       if (state.selected.has(s.id)) selectedStories.push(s);
     });
@@ -4137,22 +3588,22 @@
         if (state.selected.has(ch.id)) selectedStories.push(ch);
       });
     });
-
+ 
     Logger.info('Fetching content for ' + selectedStories.length + ' stories...');
     if (selectedStories.length > LARGE_BATCH_WARNING_THRESHOLD) {
       Logger.warn('Large batch selected (' + selectedStories.length + ' stories). Downloads remain enabled, but large EPUB and combined exports may take longer.');
     }
-
+ 
     const downloadedStories = [];
     const errors = [];
-
+ 
     try {
       for (let i = 0; i < selectedStories.length; i++) {
         ensureDownloadNotAborted();
         const story = selectedStories[i];
         UI.updateProgress(i, selectedStories.length, 'Fetching: ' + story.title + ' (' + (i + 1) + '/' + selectedStories.length + ')');
         Logger.info('Fetching story ' + (i + 1) + ' of ' + selectedStories.length + ': "' + story.title + '"');
-
+ 
         try {
           const data = await fetchStoryContent(story, downloadSignal);
           downloadedStories.push(data);
@@ -4163,33 +3614,33 @@
           errors.push({ story: story.title, error: err.message });
         }
       }
-
+ 
       Logger.info('Content fetch complete. ' + downloadedStories.length + ' stories ready, ' + errors.length + ' failed.');
-
+ 
       if (downloadedStories.length === 0) {
         Logger.error('No stories could be downloaded. Check network or story availability.');
         return;
       }
-
+ 
       function isFormatEnabled(selector, fallback) {
         const el = panelEl ? panelEl.querySelector(selector) : null;
         return el ? el.classList.contains('active') : fallback;
       }
-
+ 
       const fmtHTML = isFormatEnabled('#litdl-fmt-html', true);
       const fmtEPUB = isFormatEnabled('#litdl-fmt-epub', true);
       const fmtTXT = isFormatEnabled('#litdl-fmt-txt', false);
       const exportMode = selectedStories.length > 1 && panelEl && !panelEl.querySelector('#litdl-mode-separate').classList.contains('active')
         ? 'combined'
         : 'separate';
-
+ 
       const selectedFormats = { html: fmtHTML, epub: fmtEPUB, txt: fmtTXT };
-
+ 
       if (!fmtHTML && !fmtEPUB && !fmtTXT) {
         Logger.error('Enable HTML, EPUB, or TXT before downloading.');
         return;
       }
-
+ 
       if (exportMode === 'combined') {
         const collectionGroup = buildSelectedCollectionGroup(state.author, state.authorName, downloadedStories);
         if (fmtHTML) {
@@ -4267,7 +3718,7 @@
           }
         }
       }
-
+ 
       Logger.success('Download complete! ' + downloadedStories.length + ' stories, ' + errors.length + ' errors.');
     } catch (err) {
       if (isAbortError(err)) {
@@ -4281,39 +3732,39 @@
       UI.hideProgress();
     }
   }
-
+ 
   // Store panel ref
   let panelEl;
-
+ 
   // ============================================================
   // MAIN INITIALIZATION
   // ============================================================
-
+ 
   let didInit = false;
   let initInFlight = false;
   let routeWatcherStarted = false;
   let lastAttemptHref = null;
-
+ 
   async function init() {
     // Detect author from URL
     const author = detectAuthor();
-
+ 
     if (!author) {
       console.log('[LitDL] Not an author page, skipping.');
       return false;
     }
-
+ 
     await Settings.init();
-
+ 
     Logger.info('Detected author: ' + author);
-
+ 
     // Create UI
     UI.createPanel();
     panelEl = document.getElementById('litdl-panel');
-
+ 
     State.setState({ author });
     State.setState({ catalogStatus: null });
-
+ 
     // Restore saved filter settings
     const savedSettings = Settings.all();
     State.setState({
@@ -4322,23 +3773,23 @@
       sortBy: savedSettings.sortBy || 'date',
       searchQuery: savedSettings.searchQuery || '',
     });
-
+ 
     // Apply saved search/sort to UI
     const searchEl = panelEl.querySelector('#litdl-search');
     const sortEl = panelEl.querySelector('#litdl-sort');
     if (searchEl && savedSettings.searchQuery) searchEl.value = savedSettings.searchQuery;
     if (sortEl && savedSettings.sortBy) sortEl.value = savedSettings.sortBy;
-
+ 
     const pageAuthorName = document.querySelector('meta[property="profile:username"]')?.getAttribute('content')
       || document.querySelector('meta[name="author"]')?.getAttribute('content')
       || author;
     State.setState({ authorName: pageAuthorName });
     Logger.info('Author: ' + pageAuthorName);
-
+ 
     // Fetch full catalog
     UI.setLoading('Fetching story catalog...');
     Logger.info('Loading full story catalog...');
-
+ 
     let catalog;
     try {
       Logger.info('Reading author story pages directly...');
@@ -4362,7 +3813,7 @@
           State.setState({ authorProfile: profile, authorName, author: resolvedAuthor });
           Logger.info('Author API identifier: ' + resolvedAuthor);
         }
-
+ 
         const authorForCatalog = State.getState().author || author;
         catalog = await fetchAuthorCatalog(authorForCatalog, (loaded, total) => {
           UI.updateProgress(loaded, total || loaded, 'Fetching catalog: ' + loaded + (total ? ' of ' + total : '') + ' entries');
@@ -4375,31 +3826,31 @@
         }
       }
     }
-
+ 
     if (!catalog || catalog.length === 0) {
       UI.setLoading('No stories found for this author.');
       Logger.warn('Empty catalog returned');
       return false;
     }
-
+ 
     UI.hideProgress();
-
+ 
     // Group stories
     const grouped = groupStories(catalog);
     State.setState({ catalog, grouped });
-
+ 
     const totalCount = State.getTotalCount();
     Logger.success('Catalog loaded: ' + grouped.standalones.length + ' standalones, ' + grouped.series.length + ' series (' + totalCount + ' total)');
-
+ 
     Settings.set('lastAuthor', author);
     return true;
   }
-
+ 
   async function initOnceIfEligible() {
     if (didInit || initInFlight) return;
     if (!detectAuthor()) return;
     if (lastAttemptHref === location.href) return;
-
+ 
     initInFlight = true;
     lastAttemptHref = location.href;
     try {
@@ -4411,13 +3862,13 @@
       initInFlight = false;
     }
   }
-
+ 
   function installRouteWatcher() {
     if (routeWatcherStarted) return;
     routeWatcherStarted = true;
-
+ 
     const trigger = () => setTimeout(() => { initOnceIfEligible(); }, 250);
-
+ 
     const patchHistory = (methodName) => {
       const original = history[methodName];
       if (typeof original !== 'function') return;
@@ -4427,11 +3878,11 @@
         return result;
       };
     };
-
+ 
     patchHistory('pushState');
     patchHistory('replaceState');
     window.addEventListener('popstate', trigger);
-
+ 
     let lastHref = location.href;
     setInterval(() => {
       if (location.href !== lastHref) {
@@ -4440,7 +3891,7 @@
       }
     }, 1000);
   }
-
+ 
   // Start when DOM is ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
@@ -4451,5 +3902,5 @@
     installRouteWatcher();
     setTimeout(() => { initOnceIfEligible(); }, 500);
   }
-
+ 
 })();
