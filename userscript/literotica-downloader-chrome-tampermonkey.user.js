@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Literotica Downloader for Chrome / Tampermonkey
 // @namespace    https://studios.easyspace.in
-// @version      2.1.17
+// @version      2.1.19
 // @description  Download complete author libraries from Literotica using the site HTML. Supports HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
 // @author       easyspace
 // @license      All Rights Reserved
@@ -51,7 +51,7 @@
   // ============================================================
  
   const API_BASE = 'https://www.literotica.com/api/3';
-  const SCRIPT_VERSION = '2.1.17';
+  const SCRIPT_VERSION = '2.1.19';
   const REQUEST_DELAY_MIN = 300;
   const REQUEST_DELAY_MAX = 500;
   const MAX_RETRIES = 3;
@@ -1608,14 +1608,25 @@
  
     function processPageText(text) {
       if (!text) return '<p><em>[No content]</em></p>';
-      // The API returns HTML content in pageText
-      // Sanitize but preserve paragraph structure
-      return text
+      let processed = text
         .replace(/<script[\s\S]*?<\/script>/gi, '')
         .replace(/<style[\s\S]*?<\/style>/gi, '')
         .replace(/on\w+="[^"]*"/gi, '')
         .replace(/on\w+='[^']*'/gi, '')
-        || '<p>' + escapeHtml(text) + '</p>';
+        .trim();
+
+      if (!processed) return '<p><em>[No content]</em></p>';
+
+      if (!processed.startsWith('<')) {
+        processed = processed
+          .replace(/\r\n/g, '\n')
+          .replace(/\r/g, '\n')
+          .split(/\n{2,}/)
+          .map(part => '<p>' + escapeHtml(part).replace(/\n/g, '<br>') + '</p>')
+          .join('\n');
+      }
+
+      return processed;
     }
  
     function storyFilename(storyData) {
