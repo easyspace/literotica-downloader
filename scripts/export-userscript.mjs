@@ -58,26 +58,47 @@ function buildChromeUserscript() {
   return chromeUserscript;
 }
 
+function extractUserscriptVersion(userscript) {
+  const match = userscript.match(/^\/\/ @version\s+(\S+)/m);
+  if (!match) {
+    throw new Error("Could not locate @version in userscript metadata");
+  }
+  return match[1];
+}
+
+const firefoxOutput = buildFirefoxUserscript();
+const chromeOutput = buildChromeUserscript();
+const firefoxVersion = extractUserscriptVersion(firefoxOutput);
+const chromeVersion = extractUserscriptVersion(chromeOutput);
+
 const outputs = [
   {
     path: path.resolve("dist", "literotica-downloader-firefox-greasemonkey.user.js"),
-    content: buildFirefoxUserscript(),
+    content: firefoxOutput,
   },
   {
     path: path.resolve("dist", "literotica-downloader-chrome-tampermonkey.user.js"),
-    content: buildChromeUserscript(),
+    content: chromeOutput,
+  },
+  {
+    path: path.resolve("dist", `${firefoxVersion} literotica-downloader-firefox-greasemonkey.user.js`),
+    content: firefoxOutput,
+  },
+  {
+    path: path.resolve("dist", `${chromeVersion} literotica-downloader-chrome-tampermonkey.user.js`),
+    content: chromeOutput,
   },
   {
     path: path.resolve("userscript", "literotica-downloader-firefox-greasemonkey.user.js"),
-    content: buildFirefoxUserscript(),
+    content: firefoxOutput,
   },
   {
     path: path.resolve("userscript", "literotica-downloader-chrome-tampermonkey.user.js"),
-    content: buildChromeUserscript(),
+    content: chromeOutput,
   },
   {
     path: path.resolve("userscript", "firefox-greasemonkey.user.js"),
-    content: buildFirefoxUserscript(),
+    content: firefoxOutput,
   },
 ];
 

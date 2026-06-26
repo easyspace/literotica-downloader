@@ -3,8 +3,8 @@
 Release documentation for Literotica Downloader V2. This build reads author catalog pages from site HTML and builds story exports from Literotica's rendered story markup when available, with fallback extraction for pages that do not expose the rendered content cleanly.
 
 ## Current release
-- Firefox version: `2.1.10`
-- Chrome version: `2.1.11`
+- Firefox version: `2.1.12`
+- Chrome version: `2.1.13`
 - Firefox target: Greasemonkey
 - Chrome target: Tampermonkey
 
@@ -17,8 +17,8 @@ Release documentation for Literotica Downloader V2. This build reads author cata
 
 ## Dist naming policy
 - Current canonical last-known-good `dist` baselines are:
-  - `dist/literotica-downloader-firefox-greasemonkey.user.js` at `2.1.10`
-  - `dist/literotica-downloader-chrome-tampermonkey.user.js` at `2.1.11`
+  - `dist/literotica-downloader-firefox-greasemonkey.user.js` at `2.1.12`
+  - `dist/literotica-downloader-chrome-tampermonkey.user.js` at `2.1.13`
 - Working-source bug fixing resumes from those restored `dist` baselines.
 - Retain backup copies for every version edit for both Firefox and Chrome builds, using incremented versioned filenames such as `2.1.12`, `2.1.13`, and later.
 - Keep the unversioned browser-specific filenames in `dist` as the latest working release artifacts unless the release workflow changes deliberately.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Literotica Downloader for Firefox / Greasemonkey
 // @namespace    https://studios.easyspace.in
-// @version      2.1.10
+// @version      2.1.12
 // @description  Download complete author libraries from Literotica using the site HTML. Supports HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
 // @author       easyspace
 // @license      All Rights Reserved
@@ -46,7 +46,7 @@
   // ============================================================
  
   const API_BASE = 'https://www.literotica.com/api/3';
-  const SCRIPT_VERSION = '2.1.10';
+  const SCRIPT_VERSION = '2.1.12';
   const REQUEST_DELAY_MIN = 300;
   const REQUEST_DELAY_MAX = 500;
   const MAX_RETRIES = 3;
@@ -839,10 +839,31 @@
  
     return 0;
   }
+
+  function extractEmbeddedCatalogTotal(html) {
+    if (!html) return 0;
+
+    const patterns = [
+      /current_page:\d+,last_page:\d+,total:(\d+),per_page:\d+,has_series:/g,
+      /stories_and_series_count:(\d+)/g,
+      /stories_count:(\d+)/g,
+    ];
+    let maxTotal = 0;
+
+    patterns.forEach(pattern => {
+      let match;
+      while ((match = pattern.exec(html)) !== null) {
+        const value = parseInt(match[1], 10) || 0;
+        if (value > maxTotal) maxTotal = value;
+      }
+    });
+
+    return maxTotal;
+  }
  
   function extractCatalogFromEmbeddedData(html, author, authorName) {
     if (!html) {
-      return { authorName: authorName || author, items: [] };
+      return { authorName: authorName || author, items: [], targetTotal: 0 };
     }
  
     const itemsBySlug = new Map();
@@ -898,6 +919,7 @@
     return {
       authorName: authorName || author,
       items: Array.from(itemsBySlug.values()),
+      targetTotal: extractEmbeddedCatalogTotal(html),
     };
   }
  
@@ -1067,24 +1089,36 @@
     const doc = new DOMParser().parseFromString(html, 'text/html');
     parsed = extractCatalogFromDocument(doc, author);
     const allPageTotal = extractAuthorStoryTotal(doc);
-    const worksPageTotal = Math.max(currentPageTotal, allPageTotal);
     const visibleCount = parsed.items.length;
+    const shouldInspectEmbedded = visibleCount === 0 || currentPageTotal === 0 || allPageTotal === 0;
+    const embeddedParsed = shouldInspectEmbedded
+      ? extractCatalogFromEmbeddedData(html, author, parsed.authorName)
+      : { authorName: parsed.authorName, items: [], targetTotal: 0 };
+    const embeddedCount = embeddedParsed.items.length;
+    const worksPageTotal = Math.max(currentPageTotal, allPageTotal, embeddedParsed.targetTotal || 0);
  
-    if (currentPageTotal > 0 || allPageTotal > 0) {
-      Logger.info('Works page story total: current page=' + currentPageTotal + ', full listing=' + allPageTotal + '.');
+    if (currentPageTotal > 0 || allPageTotal > 0 || embeddedParsed.targetTotal > 0) {
+      Logger.info(
+        'Works page story total: current page=' + currentPageTotal
+        + ', full listing=' + allPageTotal
+        + ', embedded=' + (embeddedParsed.targetTotal || 0) + '.'
+      );
     }
     Logger.info('Visible listing parsed ' + visibleCount + ' stories from the /all page.');
  
     let mergedItems = parsed.items.slice();
-    let embeddedCount = visibleCount;
-    if (worksPageTotal > 0 && visibleCount < worksPageTotal) {
-      Logger.warn('Visible listing is short of the works-page total. Inspecting embedded list data...');
-      const embeddedParsed = extractCatalogFromEmbeddedData(html, author, parsed.authorName);
-      embeddedCount = embeddedParsed.items.length;
+    if (shouldInspectEmbedded) {
+      Logger.warn('Visible listing or page totals look incomplete. Inspecting embedded list data...');
       Logger.info('Embedded list data yielded ' + embeddedCount + ' unique stories.');
-      if (embeddedCount === worksPageTotal) {
+      if (visibleCount === 0 && embeddedCount > 0) {
+        Logger.info('Visible listing is empty but embedded list data is present. Using embedded data as the authoritative base list.');
+        mergedItems = embeddedParsed.items.slice();
+      } else if (worksPageTotal > 0 && embeddedCount === worksPageTotal) {
         Logger.info('Embedded list data already matches the works-page total. Using it as the authoritative base list.');
         mergedItems = embeddedParsed.items.slice();
+      } else if (embeddedCount > visibleCount) {
+        Logger.info('Embedded list data exceeds the visible listing. Merging embedded stories into the parsed catalog.');
+        mergedItems = mergeCatalogItems(parsed.items, embeddedParsed.items);
       } else {
         mergedItems = mergeCatalogItems(parsed.items, embeddedParsed.items);
       }
@@ -1150,6 +1184,7 @@
         worksPageTargetTotal: worksPageTotal,
         visibleCount,
         embeddedCount,
+        embeddedTargetTotal: embeddedParsed.targetTotal || 0,
         recoveredFromSeries,
         finalCount,
         truncatedSeriesCount: truncatedSeries.length,
