@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Literotica Downloader for Chrome / Tampermonkey
 // @namespace    https://studios.easyspace.in
-// @version      2.1.15
+// @version      2.1.17
 // @description  Download complete author libraries from Literotica using the site HTML. Supports HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
 // @author       easyspace
 // @license      All Rights Reserved
@@ -51,7 +51,7 @@
   // ============================================================
  
   const API_BASE = 'https://www.literotica.com/api/3';
-  const SCRIPT_VERSION = '2.1.15';
+  const SCRIPT_VERSION = '2.1.17';
   const REQUEST_DELAY_MIN = 300;
   const REQUEST_DELAY_MAX = 500;
   const MAX_RETRIES = 3;
@@ -666,6 +666,9 @@
  
   function buildCatalogItem(overrides = {}) {
     const dateValue = overrides.date || '';
+    const hasExplicitPageCount = overrides.pageCountKnown != null
+      ? !!overrides.pageCountKnown
+      : overrides.pageCount != null;
     return {
       id: overrides.id || overrides.slug || overrides.url || '',
       slug: overrides.slug || overrides.url || overrides.id || '',
@@ -680,6 +683,7 @@
       date: dateValue,
       dateFormatted: overrides.dateFormatted || formatDateDisplay(dateValue),
       pageCount: parseInt(overrides.pageCount || 1, 10) || 1,
+      pageCountKnown: hasExplicitPageCount,
       seriesId: overrides.seriesId || null,
       seriesTitle: overrides.seriesTitle || null,
       seriesIndex: parseInt(overrides.seriesIndex || 0, 10) || 0,
@@ -735,6 +739,7 @@
         date: dateMatch ? dateMatch[0] : '',
         dateFormatted: dateMatch ? dateMatch[0] : '',
         pageCount: 1,
+        pageCountKnown: false,
         seriesId: null,
         seriesTitle: null,
         seriesIndex: 0,
@@ -923,6 +928,7 @@
         date: dateMatch ? decodeSerializedField(dateMatch[1]).trim() : '',
         dateFormatted: dateMatch ? decodeSerializedField(dateMatch[1]).trim() : '',
         pageCount: 1,
+        pageCountKnown: false,
         seriesId: null,
         seriesTitle: null,
         seriesIndex: 0,
@@ -1080,6 +1086,7 @@
         date: dateMatch ? dateMatch[0] : '',
         dateFormatted: dateMatch ? dateMatch[0] : '',
         pageCount: 1,
+        pageCountKnown: false,
         seriesId: seriesRef.id,
         seriesTitle,
         seriesIndex: index + 1,
@@ -1234,6 +1241,7 @@
       date: raw.date_approve || raw.publishDate || raw.date || '',
       dateFormatted: formatDateDisplay(raw.date_approve || raw.publishDate || raw.date || ''),
       pageCount: parseInt(raw.meta_pages || raw.pages || raw.page_count || 1, 10),
+      pageCountKnown: raw.meta_pages != null || raw.pages != null || raw.page_count != null,
       seriesId: raw.series?.id || raw.seriesId || null,
       seriesTitle: raw.series?.title || raw.seriesTitle || null,
       seriesIndex: parseInt(raw.series_number || raw.chapterIndex || raw.series_index || 0, 10),
@@ -1275,6 +1283,7 @@
           isSeries: true,
           chapters: story.chapters.sort((a, b) => a.seriesIndex - b.seriesIndex),
           pageCount: story.chapters.reduce((s, c) => s + c.pageCount, 0),
+          pageCountKnown: story.chapters.every((c) => c.pageCountKnown),
         };
         seriesMap.set(story.id, series);
       } else if (story.seriesId) {
@@ -1293,6 +1302,7 @@
             isSeries: true,
             chapters: [],
             pageCount: 0,
+            pageCountKnown: true,
           });
         }
         const series = seriesMap.get(story.seriesId);
@@ -1300,6 +1310,7 @@
         if (!series.chapters.find(c => c.id === story.id)) {
           series.chapters.push(story);
           series.pageCount += story.pageCount;
+          series.pageCountKnown = series.pageCountKnown && !!story.pageCountKnown;
           // Update series rating as max
           if (story.rating > series.rating) series.rating = story.rating;
         }
@@ -3475,7 +3486,7 @@
             <span>${HTMLBuilder.escapeHtml(story.category)}</span>
             ${story.rating > 0 ? '<span class="litdl-rating">★ ' + story.rating.toFixed(2) + '</span>' : ''}
             <span>${story.dateFormatted}</span>
-            <span>${story.pageCount}p</span>
+            ${story.pageCountKnown ? '<span>' + story.pageCount + 'p</span>' : ''}
             ${story.wordCount > 0 ? '<span>~' + Math.round(story.wordCount / 1000) + 'k words</span>' : ''}
           </div>
         </div>
@@ -3511,7 +3522,7 @@
               <span>${HTMLBuilder.escapeHtml(series.category)}</span>
               ${series.rating > 0 ? '<span class="litdl-rating">★ ' + series.rating.toFixed(2) + '</span>' : ''}
               <span>${series.chapters.length} chapters</span>
-              <span>${series.pageCount}p total</span>
+              ${series.pageCountKnown ? '<span>' + series.pageCount + 'p total</span>' : ''}
             </div>
             <span class="litdl-series-label">SERIES — ${selectedCount}/${series.chapters.length} selected</span>
           </div>
@@ -3526,7 +3537,7 @@
               <div class="litdl-story-meta">
                 ${ch.rating > 0 ? '<span class="litdl-rating">★ ' + ch.rating.toFixed(2) + '</span>' : ''}
                 <span>${ch.dateFormatted}</span>
-                <span>${ch.pageCount}p</span>
+                ${ch.pageCountKnown ? '<span>' + ch.pageCount + 'p</span>' : ''}
               </div>
             </div>
           </div>`;
