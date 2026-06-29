@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.1.22 / 2.1.23 - 2026-06-29
+
+This release rolls back the broken `2.1.20 / 2.1.21` raw-markup experiment after it introduced overlapping and garbled text in `HTML` and `EPUB` exports.
+
+### Fixed
+- Restored the last non-garbled shared export logic from the pre-regression state.
+- Removed the `HTML` and `EPUB` overlap bug introduced by passing too much Literotica page markup directly into offline exports.
+- Removed stray site UI contamination from the regressed export path, including cases where non-story controls could bleed into downloaded output.
+- Kept `TXT` unchanged on the existing working path.
+
+### Changed
+- Published the rollback as new debug versions instead of reusing prior version numbers.
+- Deferred any new rendered-markup export path until it can be constrained to semantic story content safely.
+
 ## 2.1.20 / 2.1.21 - 2026-06-29
 
 This release removes a stale local patch backup and fixes the mixed formatting path that was flattening page 1 of some multi-page stories in HTML and EPUB while later pages still rendered correctly.
