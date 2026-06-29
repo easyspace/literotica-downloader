@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Literotica Downloader for Firefox / Greasemonkey
 // @namespace    https://studios.easyspace.in
-// @version      2.1.22
+// @version      2.1.24
 // @description  Download complete author libraries from Literotica using the site HTML. Supports HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
 // @author       easyspace
 // @license      All Rights Reserved
@@ -46,7 +46,7 @@
   // ============================================================
  
   const API_BASE = 'https://www.literotica.com/api/3';
-  const SCRIPT_VERSION = '2.1.22';
+  const SCRIPT_VERSION = '2.1.24';
   const REQUEST_DELAY_MIN = 300;
   const REQUEST_DELAY_MAX = 500;
   const MAX_RETRIES = 3;
@@ -1349,7 +1349,117 @@
           .split(slash + slash).join(slash)));
       }
     }
- 
+
+    function sanitizeStoryMarkupHref(href) {
+      if (!href) return '';
+      try {
+        const resolved = new URL(href, window.location.origin);
+        if (!/^https?:$/.test(resolved.protocol)) return '';
+        return resolved.href;
+      } catch {
+        return '';
+      }
+    }
+
+    function isHiddenStoryNode(node) {
+      if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+      const style = (node.getAttribute('style') || '').toLowerCase();
+      const className = (node.getAttribute('class') || '').toLowerCase();
+      return node.hasAttribute('hidden')
+        || node.getAttribute('aria-hidden') === 'true'
+        || style.indexOf('display:none') !== -1
+        || style.indexOf('visibility:hidden') !== -1
+        || className.indexOf('visually-hidden') !== -1;
+    }
+
+    function shouldDropStoryNode(node) {
+      if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+      const tag = node.tagName.toLowerCase();
+      if (['script', 'style', 'button', 'svg', 'form', 'input', 'textarea', 'select', 'iframe', 'noscript'].includes(tag)) {
+        return true;
+      }
+
+      const className = (node.getAttribute('class') || '').toLowerCase();
+      return /(report|bookmark|share|social|feedback|widget|stats|toolbar|actions|sidebar|author__stats)/.test(className);
+    }
+
+    function extractRenderedStoryMarkup(doc) {
+      const contentRoot = doc.querySelector('[itemprop="articleBody"]')
+        || doc.querySelector('div[class*="article__content_"]');
+      if (!contentRoot) return '';
+
+      const blockTags = new Set(['p', 'blockquote', 'ul', 'ol', 'li', 'pre']);
+
+      function serializeNode(node, insideBlock) {
+        if (!node) return '';
+
+        if (node.nodeType === Node.TEXT_NODE) {
+          return HTMLBuilder.escapeHtml(node.textContent || '');
+        }
+
+        if (node.nodeType !== Node.ELEMENT_NODE) {
+          return '';
+        }
+
+        if (isHiddenStoryNode(node) || shouldDropStoryNode(node)) {
+          return '';
+        }
+
+        const tag = node.tagName.toLowerCase();
+        if (tag === 'br') return '<br>';
+
+        const childInsideBlock = insideBlock || blockTags.has(tag);
+        const inner = Array.from(node.childNodes)
+          .map(child => serializeNode(child, childInsideBlock))
+          .join('')
+          .trim();
+
+        if (!inner && !['br'].includes(tag)) {
+          return '';
+        }
+
+        if (tag === 'a') {
+          const href = sanitizeStoryMarkupHref(node.getAttribute('href') || '');
+          return href
+            ? '<a href="' + HTMLBuilder.escapeHtml(href) + '">' + inner + '</a>'
+            : inner;
+        }
+
+        if (tag === 'em' || tag === 'i') return '<em>' + inner + '</em>';
+        if (tag === 'strong' || tag === 'b') return '<strong>' + inner + '</strong>';
+        if (tag === 'u' || tag === 's' || tag === 'sub' || tag === 'sup' || tag === 'code') {
+          return '<' + tag + '>' + inner + '</' + tag + '>';
+        }
+
+        if (blockTags.has(tag)) {
+          return '<' + tag + '>' + inner + '</' + tag + '>';
+        }
+
+        if (/^h[1-6]$/.test(tag)) {
+          return '<p><strong>' + inner + '</strong></p>';
+        }
+
+        if (tag === 'div' || tag === 'section' || tag === 'article' || tag === 'span') {
+          const hasBlockChildren = Array.from(node.children || []).some(child => blockTags.has(child.tagName.toLowerCase()));
+          if (insideBlock || hasBlockChildren) {
+            return inner;
+          }
+          return '<p>' + inner + '</p>';
+        }
+
+        return inner;
+      }
+
+      const markup = Array.from(contentRoot.childNodes)
+        .map(node => serializeNode(node, false))
+        .join('')
+        .replace(/<p>\s*<\/p>/g, '')
+        .replace(/(?:<br>\s*){3,}/g, '<br><br>')
+        .trim();
+
+      return markup;
+    }
+
     function extractPagePayload(html, pageNum) {
       const doc = new DOMParser().parseFromString(html, 'text/html');
       const pageTextMarker = 'pageText:"';
@@ -1385,8 +1495,9 @@
         .filter(Boolean);
  
       const detectedTotalPages = pageLinks.length ? Math.max(pageNum, ...pageLinks) : 1;
- 
+
       return {
+        markup: extractRenderedStoryMarkup(doc),
         text: pageTextValue ? decodeEmbeddedString(pageTextValue) : '',
         title,
         totalPages: detectedTotalPages,
@@ -1428,6 +1539,7 @@
  
         successfulPages++;
         pages.push({
+          markup: payload.markup || '',
           pageNum,
           text: payload.text,
           title: cleanStoryTitle(payload.title || (totalPages > 1 ? 'Page ' + pageNum : story.title)),
@@ -1601,16 +1713,31 @@
       let processed = text
         .replace(/<script[\s\S]*?<\/script>/gi, '')
         .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/\sstyle="[^"]*"/gi, '')
+        .replace(/\sstyle='[^']*'/gi, '')
+        .replace(/\sclass="[^"]*"/gi, '')
+        .replace(/\sclass='[^']*'/gi, '')
         .replace(/on\w+="[^"]*"/gi, '')
         .replace(/on\w+='[^']*'/gi, '')
         .trim();
 
       if (!processed) return '<p><em>[No content]</em></p>';
 
-      if (!processed.startsWith('<')) {
-        processed = processed
-          .replace(/\r\n/g, '\n')
-          .replace(/\r/g, '\n')
+      const normalized = processed
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n');
+      const hasAnyTag = /<[^>]+>/.test(processed);
+      const hasBlockMarkup = /<(?:p|div|section|article|blockquote|ul|ol|li|h[1-6]|pre)\b/i.test(processed);
+
+      if (!hasBlockMarkup && /\n{2,}/.test(normalized)) {
+        processed = normalized
+          .split(/\n{2,}/)
+          .map(part => part.trim())
+          .filter(Boolean)
+          .map(part => '<p>' + (hasAnyTag ? part : escapeHtml(part)).replace(/\n/g, '<br>') + '</p>')
+          .join('\n');
+      } else if (!processed.startsWith('<')) {
+        processed = normalized
           .split(/\n{2,}/)
           .map(part => '<p>' + escapeHtml(part).replace(/\n/g, '<br>') + '</p>')
           .join('\n');
@@ -1718,7 +1845,7 @@
       const label = chapterLabel ? '<p class="story-kicker">' + escapeHtml(chapterLabel) + '</p>' : '';
       const pagesHTML = pages.map((pg, i) => `
         ${i > 0 ? '<div class="page-separator">Page ' + pg.pageNum + '</div>' : ''}
-        <div class="story-content" id="page-${pg.pageNum}">${processPageText(pg.text)}</div>
+        <div class="story-content" id="page-${pg.pageNum}">${processPageText(pg.markup || pg.text)}</div>
       `).join('');
  
       return `

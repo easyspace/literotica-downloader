@@ -1,10 +1,10 @@
 # Literotica Downloader V2
 
-Release documentation for Literotica Downloader V2. The current release restores the last stable non-garbled HTML/EPUB export path after the failed raw-markup experiment in `2.1.20 / 2.1.21`.
+Release documentation for Literotica Downloader V2. The current release keeps the restored rollback baseline intact and fixes the HTML-only multi-page paragraph loss on affected page-1 exports.
 
 ## Current release
-- Firefox version: `2.1.22`
-- Chrome version: `2.1.23`
+- Firefox version: `2.1.24`
+- Chrome version: `2.1.25`
 - Firefox target: Greasemonkey
 - Chrome target: Tampermonkey
 
@@ -17,8 +17,8 @@ Release documentation for Literotica Downloader V2. The current release restores
 
 ## Dist naming policy
 - Current canonical last-known-good `dist` baselines are:
-  - `dist/literotica-downloader-firefox-greasemonkey.user.js` at `2.1.22`
-  - `dist/literotica-downloader-chrome-tampermonkey.user.js` at `2.1.23`
+  - `dist/literotica-downloader-firefox-greasemonkey.user.js` at `2.1.24`
+  - `dist/literotica-downloader-chrome-tampermonkey.user.js` at `2.1.25`
 - Working-source bug fixing resumes from those restored `dist` baselines.
 - Retain backup copies for every version edit for both Firefox and Chrome builds, using incremented versioned filenames such as `2.1.12`, `2.1.13`, and later.
 - Keep the unversioned browser-specific filenames in `dist` as the latest working release artifacts unless the release workflow changes deliberately.
@@ -49,8 +49,8 @@ Release documentation for Literotica Downloader V2. The current release restores
 8. Click `Download`.
 
 ## Output behavior
-- `HTML`: mobile-friendly reader file with stable paragraph and line-break handling plus the Easy Space Studios footer.
-- `EPUB`: export-ready ebook built from the same stable story-content path as the HTML export and validated before packaging.
+- `HTML`: mobile-friendly reader file that prefers a sanitized rendered story-body fragment when available, with embedded `pageText` retained as a fallback.
+- `EPUB`: export-ready ebook on the existing text-oriented export path, validated before packaging.
 - `TXT`: plain text export with ASCII footer branding.
 - `ZIP Package`: package containing selected export formats plus `index.html` and `manifest.json`.
 

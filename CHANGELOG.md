@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.1.24 / 2.1.25 - 2026-06-29
+
+This release keeps the restored rollback checkpoint intact and fixes the HTML-only page-1 paragraph loss on affected multi-page stories such as `roofer-can-take-it`.
+
+### Fixed
+- Made `HTML` prefer a sanitized rendered story-body fragment from the fetched page when Literotica's embedded `pageText` flattens page 1 into a wall of text.
+- Removed layout-bearing attributes and nearby site UI from the HTML story-body extraction path so downloaded files do not pick up report, bookmark, or share artifacts.
+- Kept single-story and combined `HTML` exports on the same repaired page-content source.
+
+### Changed
+- Left `TXT` and `EPUB` on their existing text-oriented content path for this pass.
+- Published the HTML-only repair as new debug versions `2.1.24` and `2.1.25`.
+
 ## 2.1.22 / 2.1.23 - 2026-06-29
 
 This release rolls back the broken `2.1.20 / 2.1.21` raw-markup experiment after it introduced overlapping and garbled text in `HTML` and `EPUB` exports.
