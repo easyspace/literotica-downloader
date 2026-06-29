@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.1.28 / 2.1.29 - 2026-06-30
+
+This release adds canonical story/chapter ordering so the visible list, bulk selection actions, and exported files all follow the same chapter-aware sequence.
+
+### Fixed
+- Added a `Story / Chapter Order` sort mode for multipart titles that need chapter sequencing before selection.
+- Made download fetch order follow the active canonical sort order instead of rebuilding selection order from the raw grouped catalog.
+- Preserved official series chapter order first, while adding title-based fallback sequencing for non-series multipart story families.
+- Kept combined and separate exports aligned with the same canonical ordered story list.
+
+### Changed
+- Published the chapter-ordering fix as new debug versions `2.1.28` and `2.1.29`.
+
 ## 2.1.26 / 2.1.27 - 2026-06-29
 
 This release extends the sanitized story-body fix into EPUB so affected multi-page stories no longer flatten page 1 in ebook exports while HTML and EPUB stay on the same cleaned content source.

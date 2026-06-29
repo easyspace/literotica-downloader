@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Literotica Downloader for Chrome / Tampermonkey
 // @namespace    https://studios.easyspace.in
-// @version      2.1.27
+// @version      2.1.29
 // @description  Download complete author libraries from Literotica using the site HTML. Supports HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
 // @author       easyspace
 // @license      All Rights Reserved
@@ -51,7 +51,7 @@
   // ============================================================
  
   const API_BASE = 'https://www.literotica.com/api/3';
-  const SCRIPT_VERSION = '2.1.27';
+  const SCRIPT_VERSION = '2.1.29';
   const REQUEST_DELAY_MIN = 300;
   const REQUEST_DELAY_MAX = 500;
   const MAX_RETRIES = 3;
@@ -1578,11 +1578,11 @@
   function buildExportGroups(downloadedStories) {
     const groups = [];
     const seriesMap = new Map();
- 
+  
     downloadedStories.forEach(story => {
       if (story.seriesId) {
         if (!seriesMap.has(story.seriesId)) {
-          seriesMap.set(story.seriesId, {
+          const group = {
             id: story.seriesId,
             title: story.seriesTitle || story.title,
             author: story.author,
@@ -1595,9 +1595,11 @@
             slug: story.slug,
             isSeries: true,
             stories: [],
-          });
+          };
+          seriesMap.set(story.seriesId, group);
+          groups.push(group);
         }
- 
+  
         const group = seriesMap.get(story.seriesId);
         group.stories.push(story);
         if (story.rating > group.rating) group.rating = story.rating;
@@ -1622,19 +1624,13 @@
  
     seriesMap.forEach(group => {
       group.stories.sort((a, b) => (a.seriesIndex || 0) - (b.seriesIndex || 0));
-      groups.push(group);
     });
- 
-    return groups.sort((a, b) => (b.date || '') > (a.date || '') ? 1 : -1);
+  
+    return groups;
   }
- 
+  
   function buildSelectedCollectionGroup(author, authorName, downloadedStories) {
-    const sortedStories = downloadedStories.slice().sort((a, b) => {
-      if (a.seriesId && b.seriesId && a.seriesId === b.seriesId) {
-        return (a.seriesIndex || 0) - (b.seriesIndex || 0);
-      }
-      return (b.date || '') > (a.date || '') ? 1 : -1;
-    });
+    const sortedStories = downloadedStories.slice();
  
     const lead = sortedStories[0] || {};
     return {
@@ -1650,6 +1646,52 @@
       slug: '',
       isSeries: false,
       stories: sortedStories,
+    };
+  }
+
+  function parseStorySequenceTitle(rawTitle) {
+    const title = cleanStoryTitle(rawTitle || '').replace(/\s+/g, ' ').trim();
+    const patterns = [
+      /\b(?:chapter|chapters?|chap|ch)\.?\s*(\d+)\b/i,
+      /\b(?:part|pt)\.?\s*(\d+)\b/i,
+      /\bbook\s*(\d+)\b/i,
+      /\b(?:episode|ep)\.?\s*(\d+)\b/i,
+      /#\s*(\d+)\b/i,
+    ];
+
+    let bestMatch = null;
+    patterns.forEach(pattern => {
+      const match = pattern.exec(title);
+      if (!match) return;
+      const numeric = parseInt(match[1], 10);
+      if (!Number.isFinite(numeric)) return;
+      if (!bestMatch || match.index < bestMatch.index) {
+        bestMatch = {
+          index: match.index,
+          length: match[0].length,
+          sequence: numeric,
+        };
+      }
+    });
+
+    if (!bestMatch) {
+      return {
+        fullTitle: title,
+        baseTitle: title,
+        sequence: null,
+      };
+    }
+
+    const baseTitle = (title.slice(0, bestMatch.index) + ' ' + title.slice(bestMatch.index + bestMatch.length))
+      .replace(/[\[\](){}]/g, ' ')
+      .replace(/\s*[-–—:|,#]+\s*/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return {
+      fullTitle: title,
+      baseTitle: baseTitle || title,
+      sequence: bestMatch.sequence,
     };
   }
  
@@ -2833,40 +2875,79 @@
       listeners.add(fn);
       return () => listeners.delete(fn);
     }
- 
-    function getFilteredItems() {
+  
+    function matchesStoryFilters(story, query, filterCategory, filterRating) {
+      if (query && !story.title.toLowerCase().includes(query)) return false;
+      if (filterCategory !== 'all' && story.category !== filterCategory) return false;
+      if (filterRating > 0 && story.rating < filterRating) return false;
+      return true;
+    }
+
+    function compareStoryItems(a, b, sortBy) {
+      if (sortBy === 'rating') return (b.rating || 0) - (a.rating || 0);
+      if (sortBy === 'alpha') return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+      if (sortBy === 'pages') return (b.pageCount || 0) - (a.pageCount || 0);
+      if (sortBy === 'story') {
+        const aMeta = parseStorySequenceTitle(a.title);
+        const bMeta = parseStorySequenceTitle(b.title);
+        const baseCompare = aMeta.baseTitle.localeCompare(bMeta.baseTitle, undefined, { numeric: true, sensitivity: 'base' });
+        if (baseCompare !== 0) return baseCompare;
+        if (aMeta.sequence != null && bMeta.sequence != null && aMeta.sequence !== bMeta.sequence) {
+          return aMeta.sequence - bMeta.sequence;
+        }
+        if (aMeta.sequence != null && bMeta.sequence == null) return -1;
+        if (aMeta.sequence == null && bMeta.sequence != null) return 1;
+        return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+      }
+      return (b.date || '') > (a.date || '') ? 1 : -1;
+    }
+
+    function buildOrderedItems(applyFilters) {
       const { grouped, filterCategory, filterRating, filterType, sortBy, searchQuery } = _state;
-      const q = searchQuery.toLowerCase();
- 
-      function matchesFilters(story) {
-        if (q && !story.title.toLowerCase().includes(q)) return false;
-        if (filterCategory !== 'all' && story.category !== filterCategory) return false;
-        if (filterRating > 0 && story.rating < filterRating) return false;
-        return true;
-      }
- 
+      const query = applyFilters ? searchQuery.toLowerCase() : '';
+      const activeCategory = applyFilters ? filterCategory : 'all';
+      const activeRating = applyFilters ? filterRating : 0;
+      const activeType = applyFilters ? filterType : 'all';
       let items = [];
-      if (filterType !== 'series') {
-        items = [...items, ...grouped.standalones.filter(matchesFilters).map(s => ({ ...s, _type: 'standalone' }))];
+
+      if (activeType !== 'series') {
+        items = items.concat(grouped.standalones
+          .filter(story => matchesStoryFilters(story, query, activeCategory, activeRating))
+          .map(story => ({ ...story, _type: 'standalone' })));
       }
-      if (filterType !== 'standalone') {
+
+      if (activeType !== 'standalone') {
         grouped.series.forEach(series => {
-          const matchingChapters = series.chapters.filter(matchesFilters);
-          if (matchingChapters.length > 0 || matchesFilters({ ...series, title: series.title })) {
-            items.push({ ...series, _type: 'series', chapters: matchingChapters.length > 0 ? matchingChapters : series.chapters });
+          const matchingChapters = series.chapters.filter(ch => matchesStoryFilters(ch, query, activeCategory, activeRating));
+          const seriesMatches = matchesStoryFilters({ ...series, title: series.title }, query, activeCategory, activeRating);
+          if (matchingChapters.length > 0 || seriesMatches) {
+            items.push({
+              ...series,
+              _type: 'series',
+              chapters: matchingChapters.length > 0 ? matchingChapters : series.chapters,
+            });
           }
         });
       }
- 
-      items.sort((a, b) => {
-        if (sortBy === 'rating') return b.rating - a.rating;
-        if (sortBy === 'alpha') return a.title.localeCompare(b.title);
-        if (sortBy === 'pages') return b.pageCount - a.pageCount;
-        // date (default)
-        return (b.date || '') > (a.date || '') ? 1 : -1;
-      });
- 
+
+      items.sort((a, b) => compareStoryItems(a, b, sortBy));
       return items;
+    }
+
+    function flattenItems(items) {
+      const orderedStories = [];
+      items.forEach(item => {
+        if (item._type === 'series') {
+          item.chapters.forEach(chapter => orderedStories.push(chapter));
+          return;
+        }
+        orderedStories.push(item);
+      });
+      return orderedStories;
+    }
+
+    function getFilteredItems() {
+      return buildOrderedItems(true);
     }
  
     function getStoryIdsFromItems(items) {
@@ -2955,10 +3036,19 @@
     function getTotalCount() {
       return _state.grouped.standalones.length + _state.grouped.series.reduce((s, g) => s + g.chapters.length, 0);
     }
- 
+
+    function getOrderedSelectedStories() {
+      const visibleOrdered = flattenItems(getFilteredItems()).filter(story => _state.selected.has(story.id));
+      const seenIds = new Set(visibleOrdered.map(story => story.id));
+      const hiddenOrdered = flattenItems(buildOrderedItems(false))
+        .filter(story => _state.selected.has(story.id) && !seenIds.has(story.id));
+      return visibleOrdered.concat(hiddenOrdered);
+    }
+  
     return {
       getState, setState, subscribe,
       getFilteredItems, getAllStoryIds,
+      getOrderedSelectedStories,
       selectAll, deselectAll, selectRated, selectStandalones, selectSeries,
       toggleItem, toggleSeries, toggleSeriesExpand,
       getCategories, getTotalCount,
@@ -3327,6 +3417,7 @@
               <option value="date">Date (newest)</option>
               <option value="rating">Rating (highest)</option>
               <option value="alpha">Alphabetical</option>
+              <option value="story">Story / Chapter Order</option>
               <option value="pages">Pages (most)</option>
             </select>
           </div>
@@ -3796,18 +3887,7 @@
     State.setState({ downloading: true, errors: [], cancelRequested: false });
     Logger.info('Starting download of ' + state.selected.size + ' stories');
  
-    // Collect all selected story metadata
-    const { grouped } = state;
-    const selectedStories = [];
- 
-    grouped.standalones.forEach(s => {
-      if (state.selected.has(s.id)) selectedStories.push(s);
-    });
-    grouped.series.forEach(series => {
-      series.chapters.forEach(ch => {
-        if (state.selected.has(ch.id)) selectedStories.push(ch);
-      });
-    });
+    const selectedStories = State.getOrderedSelectedStories();
  
     Logger.info('Fetching content for ' + selectedStories.length + ' stories...');
     if (selectedStories.length > LARGE_BATCH_WARNING_THRESHOLD) {

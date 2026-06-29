@@ -1,10 +1,10 @@
 # Literotica Downloader V2
 
-Release documentation for Literotica Downloader V2. The current release keeps the restored rollback baseline intact and fixes the shared multi-page paragraph loss in both HTML and EPUB exports on affected page-1 exports.
+Release documentation for Literotica Downloader V2. The current release keeps the restored rollback baseline intact and adds canonical story/chapter ordering so list sorting, selection, and export all follow the same chapter-aware sequence.
 
 ## Current release
-- Firefox version: `2.1.26`
-- Chrome version: `2.1.27`
+- Firefox version: `2.1.28`
+- Chrome version: `2.1.29`
 - Firefox target: Greasemonkey
 - Chrome target: Tampermonkey
 
@@ -17,8 +17,8 @@ Release documentation for Literotica Downloader V2. The current release keeps th
 
 ## Dist naming policy
 - Current canonical last-known-good `dist` baselines are:
-  - `dist/literotica-downloader-firefox-greasemonkey.user.js` at `2.1.26`
-  - `dist/literotica-downloader-chrome-tampermonkey.user.js` at `2.1.27`
+  - `dist/literotica-downloader-firefox-greasemonkey.user.js` at `2.1.28`
+  - `dist/literotica-downloader-chrome-tampermonkey.user.js` at `2.1.29`
 - Working-source bug fixing resumes from those restored `dist` baselines.
 - Retain backup copies for every version edit for both Firefox and Chrome builds, using incremented versioned filenames such as `2.1.12`, `2.1.13`, and later.
 - Keep the unversioned browser-specific filenames in `dist` as the latest working release artifacts unless the release workflow changes deliberately.
@@ -32,6 +32,7 @@ Release documentation for Literotica Downloader V2. The current release keeps th
 - Supports `Combined Files` and `Separate Chapters` export structure.
 - Adds Easy Space Studios footer branding to exported reading files.
 - Includes a `Stop Download` button to abort a running job cleanly.
+- Adds a chapter-aware `Story / Chapter Order` sort mode so multipart titles can be selected and exported in canonical order.
 
 ## Browser release scope
 - Firefox + Greasemonkey is the established release path.
