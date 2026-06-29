@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Literotica Downloader for Firefox / Greasemonkey
 // @namespace    https://studios.easyspace.in
-// @version      2.1.18
+// @version      2.1.20
 // @description  Download complete author libraries from Literotica using the site HTML. Supports HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
 // @author       easyspace
 // @license      All Rights Reserved
@@ -46,7 +46,7 @@
   // ============================================================
  
   const API_BASE = 'https://www.literotica.com/api/3';
-  const SCRIPT_VERSION = '2.1.18';
+  const SCRIPT_VERSION = '2.1.20';
   const REQUEST_DELAY_MIN = 300;
   const REQUEST_DELAY_MAX = 500;
   const MAX_RETRIES = 3;
@@ -1350,28 +1350,110 @@
       }
     }
  
-    function extractPagePayload(html, pageNum) {
-      const doc = new DOMParser().parseFromString(html, 'text/html');
+    function sanitizeStoryMarkupFragment(value) {
+      return String(value || '')
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/on\w+="[^"]*"/gi, '')
+        .replace(/on\w+='[^']*'/gi, '')
+        .trim();
+    }
+
+    function extractEmbeddedPageText(html) {
       const pageTextMarker = 'pageText:"';
       const pageTextStart = html.indexOf(pageTextMarker);
       let pageTextValue = '';
       const slash = String.fromCharCode(92);
- 
-      if (pageTextStart !== -1) {
-        let idx = pageTextStart + pageTextMarker.length;
-        while (idx < html.length) {
-          const ch = html.charAt(idx);
-          if (ch === '"') break;
-          if (ch === slash && idx + 1 < html.length) {
-            pageTextValue += ch + html.charAt(idx + 1);
-            idx += 2;
-            continue;
-          }
-          pageTextValue += ch;
-          idx++;
+
+      if (pageTextStart === -1) return '';
+
+      let idx = pageTextStart + pageTextMarker.length;
+      while (idx < html.length) {
+        const ch = html.charAt(idx);
+        if (ch === '"') break;
+        if (ch === slash && idx + 1 < html.length) {
+          pageTextValue += ch + html.charAt(idx + 1);
+          idx += 2;
+          continue;
         }
+        pageTextValue += ch;
+        idx++;
       }
- 
+
+      return pageTextValue ? decodeEmbeddedString(pageTextValue) : '';
+    }
+
+    function extractRenderedPageMarkup(doc) {
+      const selectors = [
+        '[itemprop="articleBody"]',
+        'article [itemprop="articleBody"]',
+        'main [itemprop="articleBody"]',
+        '.aa_ht',
+        '.b-story-body-x',
+        '[data-testid="story-content"]',
+      ];
+
+      const root = selectors
+        .map(selector => doc.querySelector(selector))
+        .find(node => node && normalizeStoryMarkup(node.textContent || '').trim());
+
+      if (!root) return '';
+
+      const clone = root.cloneNode(true);
+      clone.querySelectorAll('script, style, noscript, iframe, button, svg').forEach(node => node.remove());
+      clone.querySelectorAll('*').forEach(node => {
+        Array.from(node.attributes || []).forEach(attr => {
+          const name = String(attr.name || '').toLowerCase();
+          if (name.startsWith('on') || name === 'class' || name === 'id' || name === 'role' || name === 'tabindex' || name.startsWith('data-') || name.startsWith('aria-')) {
+            node.removeAttribute(attr.name);
+          }
+        });
+      });
+
+      return sanitizeStoryMarkupFragment(clone.innerHTML);
+    }
+
+    function convertMarkupToPlainText(markup) {
+      if (!markup) return '';
+
+      const container = document.createElement('div');
+      container.innerHTML = sanitizeStoryMarkupFragment(markup);
+      const newline = String.fromCharCode(10);
+      const blockTags = new Set(['p', 'div', 'section', 'article', 'header', 'footer', 'blockquote', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+      const parts = [];
+
+      function visit(node) {
+        if (!node) return;
+        if (node.nodeType === Node.TEXT_NODE) {
+          parts.push(node.nodeValue || '');
+          return;
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+        const tag = node.tagName.toLowerCase();
+        if (tag === 'br') {
+          parts.push(newline);
+          return;
+        }
+
+        const isBlock = blockTags.has(tag);
+        if (isBlock && parts.length > 0) parts.push(newline);
+        if (tag === 'li') parts.push('- ');
+
+        Array.from(node.childNodes).forEach(visit);
+
+        if (isBlock) parts.push(newline);
+      }
+
+      Array.from(container.childNodes).forEach(visit);
+      return normalizeStoryMarkup(parts.join(newline));
+    }
+
+    function extractPagePayload(html, pageNum) {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const embeddedText = extractEmbeddedPageText(html);
+      const renderedMarkup = extractRenderedPageMarkup(doc);
+
       const title = cleanStoryTitle(doc.querySelector('meta[property="og:title"]')?.getAttribute('content')
         || doc.title
         || story.title);
@@ -1385,9 +1467,10 @@
         .filter(Boolean);
  
       const detectedTotalPages = pageLinks.length ? Math.max(pageNum, ...pageLinks) : 1;
- 
+
       return {
-        text: pageTextValue ? decodeEmbeddedString(pageTextValue) : '',
+        text: embeddedText || convertMarkupToPlainText(renderedMarkup),
+        markup: renderedMarkup || embeddedText,
         title,
         totalPages: detectedTotalPages,
       };
@@ -1418,8 +1501,8 @@
         const html = await response.text();
         throwIfAborted(signal);
         const payload = extractPagePayload(html, pageNum);
-        if (!payload.text) {
-          throw new Error('No pageText found in story HTML: ' + url);
+        if (!payload.text && !payload.markup) {
+          throw new Error('No story content found in story HTML: ' + url);
         }
  
         if (pageNum === 1) {
@@ -1430,6 +1513,7 @@
         pages.push({
           pageNum,
           text: payload.text,
+          markup: payload.markup || '',
           title: cleanStoryTitle(payload.title || (totalPages > 1 ? 'Page ' + pageNum : story.title)),
         });
       } catch (err) {
@@ -1718,7 +1802,7 @@
       const label = chapterLabel ? '<p class="story-kicker">' + escapeHtml(chapterLabel) + '</p>' : '';
       const pagesHTML = pages.map((pg, i) => `
         ${i > 0 ? '<div class="page-separator">Page ' + pg.pageNum + '</div>' : ''}
-        <div class="story-content" id="page-${pg.pageNum}">${processPageText(pg.text)}</div>
+        <div class="story-content" id="page-${pg.pageNum}">${processPageText(pg.markup || pg.text)}</div>
       `).join('');
  
       return `
@@ -1999,7 +2083,7 @@
       const labelHtml = chapterLabel ? '<p class="section-label">' + HTMLBuilder.escapeHtml(chapterLabel) + '</p>' : '';
       const pagesHTML = pages.map((pg, index) => {
         const pageLabel = index > 0 ? '<h2>Page ' + pg.pageNum + '</h2>' : '';
-        return pageLabel + processPageTextEPUB(pg.text);
+        return pageLabel + processPageTextEPUB(pg.markup || pg.text);
       }).join('\n');
       const footerHtml = includeFooter ? HTMLBuilder.buildDownloadFooterXHTML() : '';
       return labelHtml + titleHtml + pagesHTML + footerHtml;

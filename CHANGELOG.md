@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.1.20 / 2.1.21 - 2026-06-29
+
+This release removes a stale local patch backup and fixes the mixed formatting path that was flattening page 1 of some multi-page stories in HTML and EPUB while later pages still rendered correctly.
+
+### Fixed
+- Removed the stray `backup-2.1.15.patch` workspace file.
+- Fixed the shared story fetcher so multi-page stories such as `roofer-can-take-it` no longer export page 1 as a wall of text in `HTML`.
+- Fixed the same shared-content regression in `EPUB`, where page 1 could flatten while later pages preserved paragraphs.
+- Kept `TXT` on its existing text-oriented path so the working plain-text output stays unchanged.
+
+### Changed
+- Stored both rendered story markup and plain-text fallback during page fetches instead of forcing all export formats through one flattened content field.
+- Made `HTML` and `EPUB` prefer the rendered story-body markup from the fetched page DOM, while retaining embedded `pageText` as a fallback when rendered markup is unavailable.
+
 ## 2.1.12 - 2026-06-20
 
 This release switches story exports to rendered-page markup first, improves the standalone HTML reader on phones, and hardens EPUB generation so malformed story fragments fail fast instead of producing unreadable books.
