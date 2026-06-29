@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Literotica Downloader for Firefox / Greasemonkey
 // @namespace    https://studios.easyspace.in
-// @version      2.1.24
+// @version      2.1.26
 // @description  Download complete author libraries from Literotica using the site HTML. Supports HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
 // @author       easyspace
 // @license      All Rights Reserved
@@ -46,7 +46,7 @@
   // ============================================================
  
   const API_BASE = 'https://www.literotica.com/api/3';
-  const SCRIPT_VERSION = '2.1.24';
+  const SCRIPT_VERSION = '2.1.26';
   const REQUEST_DELAY_MIN = 300;
   const REQUEST_DELAY_MAX = 500;
   const MAX_RETRIES = 3;
@@ -2108,10 +2108,33 @@
       let processed = text
         .replace(/<script[\s\S]*?<\/script>/gi, '')
         .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/\sstyle="[^"]*"/gi, '')
+        .replace(/\sstyle='[^']*'/gi, '')
+        .replace(/\sclass="[^"]*"/gi, '')
+        .replace(/\sclass='[^']*'/gi, '')
         .replace(/on\w+="[^"]*"/gi, '')
-        .replace(/on\w+='[^']*'/gi, '');
-      if (!processed.trim().startsWith('<')) {
-        processed = processed.split('\n\n').map(p => '<p>' + p.replace(/\n/g, '<br/>') + '</p>').join('\n');
+        .replace(/on\w+='[^']*'/gi, '')
+        .trim();
+      if (!processed) return '<p><em>[No content available]</em></p>';
+
+      const normalized = processed
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n');
+      const hasAnyTag = /<[^>]+>/.test(processed);
+      const hasBlockMarkup = /<(?:p|div|section|article|blockquote|ul|ol|li|h[1-6]|pre)\b/i.test(processed);
+
+      if (!hasBlockMarkup && /\n{2,}/.test(normalized)) {
+        processed = normalized
+          .split(/\n{2,}/)
+          .map(part => part.trim())
+          .filter(Boolean)
+          .map(part => '<p>' + (hasAnyTag ? part : HTMLBuilder.escapeHtml(part)).replace(/\n/g, '<br/>') + '</p>')
+          .join('\n');
+      } else if (!processed.startsWith('<')) {
+        processed = normalized
+          .split(/\n{2,}/)
+          .map(part => '<p>' + HTMLBuilder.escapeHtml(part).replace(/\n/g, '<br/>') + '</p>')
+          .join('\n');
       }
       return processed;
     }
@@ -2126,7 +2149,7 @@
       const labelHtml = chapterLabel ? '<p class="section-label">' + HTMLBuilder.escapeHtml(chapterLabel) + '</p>' : '';
       const pagesHTML = pages.map((pg, index) => {
         const pageLabel = index > 0 ? '<h2>Page ' + pg.pageNum + '</h2>' : '';
-        return pageLabel + processPageTextEPUB(pg.text);
+        return pageLabel + processPageTextEPUB(pg.markup || pg.text);
       }).join('\n');
       const footerHtml = includeFooter ? HTMLBuilder.buildDownloadFooterXHTML() : '';
       return labelHtml + titleHtml + pagesHTML + footerHtml;

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.1.26 / 2.1.27 - 2026-06-29
+
+This release extends the sanitized story-body fix into EPUB so affected multi-page stories no longer flatten page 1 in ebook exports while HTML and EPUB stay on the same cleaned content source.
+
+### Fixed
+- Made `EPUB` prefer the same sanitized rendered story-body fragment already used by the repaired `HTML` export path.
+- Fixed page-1 paragraph loss in `EPUB` for affected multi-page stories such as `roofer-can-take-it`.
+- Kept stray Literotica layout and UI markup out of EPUB content by reusing the constrained semantic fragment instead of raw page DOM.
+
+### Changed
+- Published the EPUB follow-up as new debug versions `2.1.26` and `2.1.27`.
+- Kept `TXT` unchanged on its current path.
+
 ## 2.1.24 / 2.1.25 - 2026-06-29
 
 This release keeps the restored rollback checkpoint intact and fixes the HTML-only page-1 paragraph loss on affected multi-page stories such as `roofer-can-take-it`.
