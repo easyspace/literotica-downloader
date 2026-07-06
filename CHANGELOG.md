@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.1.30 / 2.1.31 - 2026-07-07
+
+This release fixes the downloader panel on shorter windows and smaller monitors so the story list remains reachable instead of disappearing behind fixed-height sections.
+
+### Fixed
+- Made the story list an explicitly shrinkable flex scroll region so resized windows keep a usable list scrollbar.
+- Added compact-height panel behavior that tightens spacing when vertical space is limited.
+- Made `Filters`, `Selection`, `Export Formats`, and `Console` collapsible in compact mode, with `Console` collapsed first to preserve story-list space.
+- Kept the main download controls reachable without falling back to whole-panel scrolling in normal desktop use.
+
+### Changed
+- Published the responsive panel fix as new debug versions `2.1.30` and `2.1.31`.
+
 ## 2.1.28 / 2.1.29 - 2026-06-30
 
 This release adds canonical story/chapter ordering so the visible list, bulk selection actions, and exported files all follow the same chapter-aware sequence.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Literotica Downloader for Firefox / Greasemonkey
 // @namespace    https://studios.easyspace.in
-// @version      2.1.28
+// @version      2.1.30
 // @description  Download complete author libraries from Literotica using the site HTML. Supports HTML, EPUB, and TXT export with full series grouping, filtering, and retry logic.
 // @author       easyspace
 // @license      All Rights Reserved
@@ -46,7 +46,7 @@
   // ============================================================
  
   const API_BASE = 'https://www.literotica.com/api/3';
-  const SCRIPT_VERSION = '2.1.28';
+  const SCRIPT_VERSION = '2.1.30';
   const REQUEST_DELAY_MIN = 300;
   const REQUEST_DELAY_MAX = 500;
   const MAX_RETRIES = 3;
@@ -3054,6 +3054,16 @@
     let catalogStatusEl = null;
     let batchWarningEl = null;
     let isOpen = true;
+    const COMPACT_PANEL_HEIGHT = 860;
+    let compactMode = false;
+    let compactDefaultsApplied = false;
+    let resizeFrame = 0;
+    const sectionState = {
+      filters: false,
+      selection: false,
+      export: false,
+      console: false,
+    };
  
     const CSS = `
       #litdl-panel {
@@ -3073,6 +3083,7 @@
         box-shadow: -4px 0 24px rgba(0,0,0,0.5);
         transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
         overflow: hidden;
+        min-height: 0;
       }
       #litdl-panel.collapsed { transform: translateX(360px); }
       #litdl-toggle {
@@ -3116,6 +3127,8 @@
         color: #666;
         display: flex;
         gap: 12px;
+        flex-wrap: wrap;
+        row-gap: 4px;
       }
       #litdl-panel .litdl-header .meta-count {
         color: #8870c0;
@@ -3125,6 +3138,7 @@
         padding: 10px 14px;
         border-bottom: 1px solid #1a1a28;
         flex-shrink: 0;
+        min-height: 0;
       }
       .litdl-section-title {
         font-size: 10px;
@@ -3134,8 +3148,36 @@
         margin-bottom: 8px;
         font-weight: 600;
       }
-      .litdl-scroll {
+      .litdl-section-header {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin: 0;
+        padding: 0;
+        background: none;
+        border: none;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+      }
+      .litdl-section-header .litdl-section-title {
+        margin-bottom: 0;
         flex: 1;
+      }
+      .litdl-section-toggle-icon {
+        display: none;
+        color: #6c5b8f;
+        font-size: 12px;
+        line-height: 1;
+        transition: transform 0.2s ease;
+      }
+      .litdl-section-body { margin-top: 8px; min-height: 0; }
+      .litdl-collapsible-section.collapsed .litdl-section-toggle-icon { transform: rotate(-90deg); }
+      .litdl-scroll {
+        flex: 1 1 auto;
+        min-height: 0;
         overflow-y: auto;
         scrollbar-width: thin;
         scrollbar-color: #2a2a3e transparent;
@@ -3305,6 +3347,8 @@
         font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
         padding: 8px 14px;
         height: 120px;
+        max-height: 120px;
+        min-height: 0;
         overflow-y: auto;
         scrollbar-width: thin;
         scrollbar-color: #1e1e2e transparent;
@@ -3316,6 +3360,58 @@
       
       /* Page body adjustment */
       body.litdl-active { margin-right: 380px !important; }
+
+      #litdl-panel.litdl-compact .litdl-header {
+        padding: 10px 12px 9px;
+      }
+      #litdl-panel.litdl-compact .litdl-header h2 {
+        font-size: 13px;
+        margin-bottom: 3px;
+      }
+      #litdl-panel.litdl-compact .litdl-header .meta-line {
+        font-size: 10px;
+        gap: 8px;
+      }
+      #litdl-panel.litdl-compact .litdl-section {
+        padding: 8px 12px;
+      }
+      #litdl-panel.litdl-compact .litdl-filter-row {
+        margin-bottom: 4px;
+      }
+      #litdl-panel.litdl-compact .litdl-select,
+      #litdl-panel.litdl-compact .litdl-input {
+        font-size: 10.5px;
+        padding: 4px 7px;
+      }
+      #litdl-panel.litdl-compact .litdl-btn,
+      #litdl-panel.litdl-compact .litdl-format-toggle {
+        font-size: 10px;
+        padding: 4px 8px;
+      }
+      #litdl-panel.litdl-compact #litdl-download-btn,
+      #litdl-panel.litdl-compact #litdl-abort-btn {
+        padding: 7px !important;
+      }
+      #litdl-panel.litdl-compact .litdl-story-item {
+        padding: 7px 12px;
+      }
+      #litdl-panel.litdl-compact .litdl-scroll {
+        min-height: 140px;
+      }
+      #litdl-panel.litdl-compact .litdl-log {
+        height: 90px;
+        max-height: 90px;
+        padding: 6px 10px;
+      }
+      #litdl-panel.litdl-compact .litdl-collapsible-section .litdl-section-header {
+        cursor: pointer;
+      }
+      #litdl-panel.litdl-compact .litdl-collapsible-section .litdl-section-toggle-icon {
+        display: block;
+      }
+      #litdl-panel.litdl-compact .litdl-collapsible-section.collapsed .litdl-section-body {
+        display: none;
+      }
       
       @media (max-width: 500px) {
         #litdl-panel { width: 100vw; height: 50vh; top: auto; bottom: 0; border-left: none; border-top: 1px solid #2a2a3e; }
@@ -3367,77 +3463,92 @@
           <div id="litdl-catalog-status" style="margin-top:8px;font-size:11px;line-height:1.4;color:#c6c7d8;"></div>
         </div>
         
-        <div class="litdl-section">
-          <div class="litdl-section-title">Filters</div>
-          <div class="litdl-filter-row">
-            <span class="litdl-label">Search</span>
-            <input class="litdl-input" id="litdl-search" type="text" placeholder="Title search..." />
-          </div>
-          <div class="litdl-filter-row">
-            <span class="litdl-label">Category</span>
-            <select class="litdl-select" id="litdl-filter-cat">
-              <option value="all">All Categories</option>
-            </select>
-          </div>
-          <div class="litdl-filter-row">
-            <span class="litdl-label">Rating ≥</span>
-            <select class="litdl-select" id="litdl-filter-rating">
-              <option value="0">Any Rating</option>
-              <option value="3">3.0+</option>
-              <option value="3.5">3.5+</option>
-              <option value="4">4.0+</option>
-              <option value="4.5">4.5+</option>
-            </select>
-            <select class="litdl-select" id="litdl-filter-type" style="margin-left:6px;">
-              <option value="all">All Types</option>
-              <option value="standalone">Standalones</option>
-              <option value="series">Series Only</option>
-            </select>
-          </div>
-          <div class="litdl-filter-row">
-            <span class="litdl-label">Sort</span>
-            <select class="litdl-select" id="litdl-sort">
-              <option value="date">Date (newest)</option>
-              <option value="rating">Rating (highest)</option>
-              <option value="alpha">Alphabetical</option>
-              <option value="story">Story / Chapter Order</option>
-              <option value="pages">Pages (most)</option>
-            </select>
+        <div class="litdl-section litdl-collapsible-section" data-section="filters">
+          <button class="litdl-section-header" type="button" data-section-toggle="filters" aria-expanded="true">
+            <span class="litdl-section-title">Filters</span>
+            <span class="litdl-section-toggle-icon">▾</span>
+          </button>
+          <div class="litdl-section-body">
+            <div class="litdl-filter-row">
+              <span class="litdl-label">Search</span>
+              <input class="litdl-input" id="litdl-search" type="text" placeholder="Title search..." />
+            </div>
+            <div class="litdl-filter-row">
+              <span class="litdl-label">Category</span>
+              <select class="litdl-select" id="litdl-filter-cat">
+                <option value="all">All Categories</option>
+              </select>
+            </div>
+            <div class="litdl-filter-row">
+              <span class="litdl-label">Rating ≥</span>
+              <select class="litdl-select" id="litdl-filter-rating">
+                <option value="0">Any Rating</option>
+                <option value="3">3.0+</option>
+                <option value="3.5">3.5+</option>
+                <option value="4">4.0+</option>
+                <option value="4.5">4.5+</option>
+              </select>
+              <select class="litdl-select" id="litdl-filter-type" style="margin-left:6px;">
+                <option value="all">All Types</option>
+                <option value="standalone">Standalones</option>
+                <option value="series">Series Only</option>
+              </select>
+            </div>
+            <div class="litdl-filter-row">
+              <span class="litdl-label">Sort</span>
+              <select class="litdl-select" id="litdl-sort">
+                <option value="date">Date (newest)</option>
+                <option value="rating">Rating (highest)</option>
+                <option value="alpha">Alphabetical</option>
+                <option value="story">Story / Chapter Order</option>
+                <option value="pages">Pages (most)</option>
+              </select>
+            </div>
           </div>
         </div>
         
-        <div class="litdl-section">
-          <div class="litdl-section-title">Selection</div>
-          <div class="litdl-btn-row">
-            <button class="litdl-btn" id="litdl-sel-all">Select All</button>
-            <button class="litdl-btn" id="litdl-desel-all">Deselect All</button>
-            <button class="litdl-btn" id="litdl-sel-rated">★ 4.0+</button>
-            <button class="litdl-btn" id="litdl-sel-standalone">Standalones</button>
-            <button class="litdl-btn" id="litdl-sel-series">Series</button>
-            <button class="litdl-btn" id="litdl-restore-sel">Restore Last</button>
+        <div class="litdl-section litdl-collapsible-section" data-section="selection">
+          <button class="litdl-section-header" type="button" data-section-toggle="selection" aria-expanded="true">
+            <span class="litdl-section-title">Selection</span>
+            <span class="litdl-section-toggle-icon">▾</span>
+          </button>
+          <div class="litdl-section-body">
+            <div class="litdl-btn-row">
+              <button class="litdl-btn" id="litdl-sel-all">Select All</button>
+              <button class="litdl-btn" id="litdl-desel-all">Deselect All</button>
+              <button class="litdl-btn" id="litdl-sel-rated">★ 4.0+</button>
+              <button class="litdl-btn" id="litdl-sel-standalone">Standalones</button>
+              <button class="litdl-btn" id="litdl-sel-series">Series</button>
+              <button class="litdl-btn" id="litdl-restore-sel">Restore Last</button>
+            </div>
+            <div id="litdl-batch-warning" style="display:none;margin-top:10px;padding:8px 10px;border:1px solid rgba(222, 166, 61, 0.35);border-radius:8px;background:rgba(222, 166, 61, 0.08);color:#f0d18a;font-size:11px;line-height:1.4;"></div>
           </div>
-          <div id="litdl-batch-warning" style="display:none;margin-top:10px;padding:8px 10px;border:1px solid rgba(222, 166, 61, 0.35);border-radius:8px;background:rgba(222, 166, 61, 0.08);color:#f0d18a;font-size:11px;line-height:1.4;"></div>
         </div>
         
-        <div class="litdl-section">
-          <div class="litdl-section-title">Export Formats</div>
-          <div class="litdl-format-row">
-            <button class="litdl-format-toggle active" id="litdl-fmt-html">📄 HTML</button>
-            <button class="litdl-format-toggle" id="litdl-fmt-epub">📚 EPUB</button>
-            <button class="litdl-format-toggle" id="litdl-fmt-txt">📝 TXT</button>
-          </div>
-          <div class="litdl-section-title" style="margin-top:10px;">File Structure</div>
-          <div class="litdl-format-row">
-            <button class="litdl-format-toggle active" id="litdl-mode-combined">📚 Combined Files</button>
-            <button class="litdl-format-toggle" id="litdl-mode-separate">🧩 Separate Chapters</button>
-          </div>
-          <div style="margin-top:10px;">
-            <button class="litdl-btn primary" id="litdl-download-btn" style="width:100%;padding:8px;" disabled>
-              ⬇ Download Selected Stories
-            </button>
-            <button class="litdl-btn" id="litdl-abort-btn" style="width:100%;padding:8px;margin-top:6px;display:none;">
-              Stop Download
-            </button>
+        <div class="litdl-section litdl-collapsible-section" data-section="export">
+          <button class="litdl-section-header" type="button" data-section-toggle="export" aria-expanded="true">
+            <span class="litdl-section-title">Export Formats</span>
+            <span class="litdl-section-toggle-icon">▾</span>
+          </button>
+          <div class="litdl-section-body">
+            <div class="litdl-format-row">
+              <button class="litdl-format-toggle active" id="litdl-fmt-html">📄 HTML</button>
+              <button class="litdl-format-toggle" id="litdl-fmt-epub">📚 EPUB</button>
+              <button class="litdl-format-toggle" id="litdl-fmt-txt">📝 TXT</button>
+            </div>
+            <div class="litdl-section-title" style="margin-top:10px;">File Structure</div>
+            <div class="litdl-format-row">
+              <button class="litdl-format-toggle active" id="litdl-mode-combined">📚 Combined Files</button>
+              <button class="litdl-format-toggle" id="litdl-mode-separate">🧩 Separate Chapters</button>
+            </div>
+            <div style="margin-top:10px;">
+              <button class="litdl-btn primary" id="litdl-download-btn" style="width:100%;padding:8px;" disabled>
+                ⬇ Download Selected Stories
+              </button>
+              <button class="litdl-btn" id="litdl-abort-btn" style="width:100%;padding:8px;margin-top:6px;display:none;">
+                Stop Download
+              </button>
+            </div>
           </div>
         </div>
         
@@ -3451,9 +3562,14 @@
           <div style="padding:20px;text-align:center;color:#333;">Loading catalog...</div>
         </div>
         
-        <div class="litdl-section" style="padding:6px 14px;flex-shrink:0;">
-          <div class="litdl-section-title" style="margin-bottom:4px;">Console</div>
-          <div class="litdl-log" id="litdl-log"></div>
+        <div class="litdl-section litdl-collapsible-section" data-section="console" style="padding:6px 14px;flex-shrink:0;">
+          <button class="litdl-section-header" type="button" data-section-toggle="console" aria-expanded="true">
+            <span class="litdl-section-title" style="margin-bottom:4px;">Console</span>
+            <span class="litdl-section-toggle-icon">▾</span>
+          </button>
+          <div class="litdl-section-body">
+            <div class="litdl-log" id="litdl-log"></div>
+          </div>
         </div>
       `;
  
@@ -3469,10 +3585,12 @@
       selectedCountEl = panelEl.querySelector('#litdl-selected-count');
       catalogStatusEl = panelEl.querySelector('#litdl-catalog-status');
       batchWarningEl = panelEl.querySelector('#litdl-batch-warning');
- 
+  
       // Wire up events
       wireEvents();
- 
+      applyResponsiveLayout();
+      window.addEventListener('resize', handleViewportResize, { passive: true });
+  
       // Subscribe to logger
       Logger.onLog(entry => appendLog(entry));
  
@@ -3483,6 +3601,12 @@
     }
  
     function wireEvents() {
+      panelEl.querySelectorAll('[data-section-toggle]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          toggleSection(btn.getAttribute('data-section-toggle'));
+        });
+      });
+
       // Filters
       panelEl.querySelector('#litdl-search').addEventListener('input', e => {
         State.setState({ searchQuery: e.target.value });
@@ -3575,6 +3699,52 @@
       // Download button
       panelEl.querySelector('#litdl-download-btn').onclick = startDownload;
       panelEl.querySelector('#litdl-abort-btn').onclick = requestDownloadAbort;
+    }
+
+    function handleViewportResize() {
+      if (resizeFrame) cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = 0;
+        applyResponsiveLayout();
+      });
+    }
+
+    function applyResponsiveLayout() {
+      if (!panelEl) return;
+
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const nextCompactMode = viewportHeight > 0 && viewportHeight <= COMPACT_PANEL_HEIGHT;
+
+      if (nextCompactMode && !compactDefaultsApplied) {
+        sectionState.console = true;
+        compactDefaultsApplied = true;
+      }
+
+      compactMode = nextCompactMode;
+      panelEl.classList.toggle('litdl-compact', compactMode);
+      syncSectionState();
+    }
+
+    function toggleSection(sectionName) {
+      if (!compactMode || !sectionName || !(sectionName in sectionState)) return;
+      sectionState[sectionName] = !sectionState[sectionName];
+      syncSectionState();
+    }
+
+    function syncSectionState() {
+      if (!panelEl) return;
+
+      panelEl.querySelectorAll('.litdl-collapsible-section').forEach(sectionEl => {
+        const sectionName = sectionEl.getAttribute('data-section');
+        const collapsed = compactMode && !!sectionState[sectionName];
+        sectionEl.classList.toggle('collapsed', collapsed);
+
+        const toggle = sectionEl.querySelector('[data-section-toggle]');
+        if (toggle) {
+          toggle.setAttribute('aria-expanded', String(!collapsed));
+          toggle.title = compactMode ? (collapsed ? 'Expand section' : 'Collapse section') : '';
+        }
+      });
     }
  
     function appendLog(entry) {

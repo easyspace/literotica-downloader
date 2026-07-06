@@ -1,10 +1,10 @@
 # Literotica Downloader V2
 
-Release documentation for Literotica Downloader V2. The current release keeps the restored rollback baseline intact and adds canonical story/chapter ordering so list sorting, selection, and export all follow the same chapter-aware sequence.
+Release documentation for Literotica Downloader V2. The current release keeps the restored rollback baseline intact, adds canonical story/chapter ordering, and makes the downloader panel usable on shorter windows and smaller monitors.
 
 ## Current release
-- Firefox version: `2.1.28`
-- Chrome version: `2.1.29`
+- Firefox version: `2.1.30`
+- Chrome version: `2.1.31`
 - Firefox target: Greasemonkey
 - Chrome target: Tampermonkey
 
@@ -33,6 +33,7 @@ Release documentation for Literotica Downloader V2. The current release keeps th
 - Adds Easy Space Studios footer branding to exported reading files.
 - Includes a `Stop Download` button to abort a running job cleanly.
 - Adds a chapter-aware `Story / Chapter Order` sort mode so multipart titles can be selected and exported in canonical order.
+- Adds a compact-height panel mode so the story list stays reachable on resized desktop windows and smaller displays.
 
 ## Browser release scope
 - Firefox + Greasemonkey is the established release path.
@@ -54,6 +55,7 @@ Release documentation for Literotica Downloader V2. The current release keeps th
 - `EPUB`: export-ready ebook that now uses the same sanitized rendered story-body fragment when available, with embedded `pageText` retained as a fallback.
 - `TXT`: plain text export with ASCII footer branding.
 - `ZIP Package`: package containing selected export formats plus `index.html` and `manifest.json`.
+- Panel layout: the story list remains the primary scroll region, while secondary sections can collapse automatically in compact-height mode.
 
 ## Notes
 - Selection shortcuts like `Select All`, `★ 4.0+`, `Standalones`, and `Series` operate on the filtered/search-visible list.
