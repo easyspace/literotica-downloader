@@ -28,6 +28,9 @@ Main panel view:
 Selection and export examples:
 ![Selection example 1](screenshots/01.jpg)
 ![Selection example 2](screenshots/02.jpg)
+![Selection example 3](screenshots/03.jpg)
+![Selection example 4](screenshots/04.jpg)
+![Selection example 5](screenshots/05.jpg)
 
 ## Supported browsers
 - Firefox + Greasemonkey
