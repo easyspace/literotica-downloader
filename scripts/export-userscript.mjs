@@ -13,8 +13,6 @@ const chromeUserscriptPath = path.resolve(
   "literotica-downloader-chrome-tampermonkey.user.js",
 );
 const chromeUserscript = fs.readFileSync(chromeUserscriptPath, "utf8");
-const archiveDir = path.resolve("userscript", "archive");
-
 function replaceMeta(userscript, key, value) {
   const lines = userscript.split("\n");
   const matcher = new RegExp("^// @" + key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(\\s+)");
@@ -59,30 +57,8 @@ function buildChromeUserscript() {
   return chromeUserscript;
 }
 
-function extractUserscriptVersion(userscript) {
-  const match = userscript.match(/^\/\/ @version\s+(\S+)/m);
-  if (!match) {
-    throw new Error("Could not locate @version in userscript metadata");
-  }
-  return match[1];
-}
-
 const firefoxOutput = buildFirefoxUserscript();
 const chromeOutput = buildChromeUserscript();
-const firefoxVersion = extractUserscriptVersion(firefoxOutput);
-const chromeVersion = extractUserscriptVersion(chromeOutput);
-
-function buildArchivedVersionOutputs() {
-  if (!fs.existsSync(archiveDir)) return [];
-
-  return fs.readdirSync(archiveDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".user.js"))
-    .map((entry) => ({
-      path: path.resolve("dist", entry.name),
-      content: fs.readFileSync(path.resolve(archiveDir, entry.name), "utf8"),
-    }));
-}
-
 const outputs = [
   {
     path: path.resolve("dist", "literotica-downloader-firefox-greasemonkey.user.js"),
@@ -93,22 +69,6 @@ const outputs = [
     content: chromeOutput,
   },
   {
-    path: path.resolve("dist", `${firefoxVersion} literotica-downloader-firefox-greasemonkey.user.js`),
-    content: firefoxOutput,
-  },
-  {
-    path: path.resolve("dist", `${chromeVersion} literotica-downloader-chrome-tampermonkey.user.js`),
-    content: chromeOutput,
-  },
-  {
-    path: path.resolve("userscript", "archive", `${firefoxVersion} literotica-downloader-firefox-greasemonkey.user.js`),
-    content: firefoxOutput,
-  },
-  {
-    path: path.resolve("userscript", "archive", `${chromeVersion} literotica-downloader-chrome-tampermonkey.user.js`),
-    content: chromeOutput,
-  },
-  {
     path: path.resolve("userscript", "literotica-downloader-firefox-greasemonkey.user.js"),
     content: firefoxOutput,
   },
@@ -116,14 +76,10 @@ const outputs = [
     path: path.resolve("userscript", "literotica-downloader-chrome-tampermonkey.user.js"),
     content: chromeOutput,
   },
-  {
-    path: path.resolve("userscript", "firefox-greasemonkey.user.js"),
-    content: firefoxOutput,
-  },
 ];
 
 const outputMap = new Map();
-for (const output of [...buildArchivedVersionOutputs(), ...outputs]) {
+for (const output of outputs) {
   outputMap.set(output.path, output.content);
 }
 

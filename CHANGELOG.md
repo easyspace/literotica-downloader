@@ -11,7 +11,7 @@ This release fixes the downloader panel on shorter windows and smaller monitors 
 - Kept the main download controls reachable without falling back to whole-panel scrolling in normal desktop use.
 
 ### Changed
-- Published the responsive panel fix as new debug versions `2.1.30` and `2.1.31`.
+- Published the responsive panel fix as versions `2.1.30` and `2.1.31`.
 
 ## 2.1.28 / 2.1.29 - 2026-06-30
 
@@ -24,7 +24,7 @@ This release adds canonical story/chapter ordering so the visible list, bulk sel
 - Kept combined and separate exports aligned with the same canonical ordered story list.
 
 ### Changed
-- Published the chapter-ordering fix as new debug versions `2.1.28` and `2.1.29`.
+- Published the chapter-ordering fix as versions `2.1.28` and `2.1.29`.
 
 ## 2.1.26 / 2.1.27 - 2026-06-29
 
@@ -36,7 +36,7 @@ This release extends the sanitized story-body fix into EPUB so affected multi-pa
 - Kept stray Literotica layout and UI markup out of EPUB content by reusing the constrained semantic fragment instead of raw page DOM.
 
 ### Changed
-- Published the EPUB follow-up as new debug versions `2.1.26` and `2.1.27`.
+- Published the EPUB follow-up as versions `2.1.26` and `2.1.27`.
 - Kept `TXT` unchanged on its current path.
 
 ## 2.1.24 / 2.1.25 - 2026-06-29
@@ -50,7 +50,7 @@ This release keeps the restored rollback checkpoint intact and fixes the HTML-on
 
 ### Changed
 - Left `TXT` and `EPUB` on their existing text-oriented content path for this pass.
-- Published the HTML-only repair as new debug versions `2.1.24` and `2.1.25`.
+- Published the HTML-only repair as versions `2.1.24` and `2.1.25`.
 
 ## 2.1.22 / 2.1.23 - 2026-06-29
 
@@ -63,7 +63,7 @@ This release rolls back the broken `2.1.20 / 2.1.21` raw-markup experiment after
 - Kept `TXT` unchanged on the existing working path.
 
 ### Changed
-- Published the rollback as new debug versions instead of reusing prior version numbers.
+- Published the rollback as versions `2.1.22` and `2.1.23` instead of reusing prior version numbers.
 - Deferred any new rendered-markup export path until it can be constrained to semantic story content safely.
 
 ## 2.1.20 / 2.1.21 - 2026-06-29

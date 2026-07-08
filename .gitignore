@@ -13,6 +13,7 @@ pnpm-debug.log*
 
 # Archives / build artifacts
 *.zip
+*.rar
 
 # Build artifacts
 dist/

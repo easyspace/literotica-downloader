@@ -28,19 +28,9 @@
  
 /* ============================================================
    LITEROTICA DOWNLOADER
-   Production-Quality Author Library Downloader
+   Author Library Downloader
    
-   Architecture:
-   - Phase 1: API Layer + Retry Engine
-   - Phase 2: Author Catalog Retrieval + Pagination
-   - Phase 3: Series Grouping Logic
-   - Phase 4: UI Shell
-   - Phase 5: Story Content Fetching
-   - Phase 6: HTML Builder
-   - Phase 7: EPUB Builder
-   - Phase 8: ZIP Package Generator
-   - Phase 9: Persistent Settings
-   - Phase 10: Polish + Edge Cases
+   Browser userscript for Literotica author and member story pages.
    ============================================================ */
  
 (function () {
