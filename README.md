@@ -7,7 +7,7 @@ Public release repository for Literotica Downloader V2.
 - Chrome + Tampermonkey: `2.1.31`
 
 ## Install
-- Firefox + Greasemonkey listing: https://sleazyfork.org/en/scripts/577945-literotica-downloader-v2
+- Firefox Greasemonkey + Chrome Tampermonkey listing: https://greasyfork.org/en/users/1600683-easyspace-studios
 - Firefox + Greasemonkey package: `dist/literotica-downloader-firefox-greasemonkey.user.js`
 - Chrome + Tampermonkey package: `dist/literotica-downloader-chrome-tampermonkey.user.js`
 - Maintained Firefox package copy: `userscript/literotica-downloader-firefox-greasemonkey.user.js`
